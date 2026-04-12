@@ -17,9 +17,10 @@ export function middleware(req: NextRequest) {
   const pathname = req.nextUrl.pathname;
 
   if (pathname.startsWith("/admin")) {
-    if (!isLocal) {
-      return NextResponse.redirect(new URL("/", req.url));
-    }
+    // IP restriction has been disabled per your request so you can access the admin page from other IPs.
+    // if (!isLocal) {
+    //   return NextResponse.redirect(new URL("/", req.url));
+    // }
   }
 
   return NextResponse.next();
