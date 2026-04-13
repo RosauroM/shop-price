@@ -1,7 +1,7 @@
 "use client";
 import { app } from "@/lib/firebase";
 import { useState, useEffect, useRef } from "react";
-import { getAllArticles } from "@/lib/storage";
+import { getAllArticles, getAllCategories } from "@/lib/storage";
 import {
   getEffectivePrice,
   getActiveDiscount,
@@ -9,22 +9,31 @@ import {
   formatCurrency,
   toDateString,
 } from "@/lib/pricing";
-import type { Article } from "@/lib/types";
+import type { Article, Category } from "@/lib/types";
 import { ShopLogo } from "@/app/components/ShopLogo";
+import Link from "next/link";
 
 export default function StorefrontPage() {
   const [articles, setArticles] = useState<Article[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [displayLimit, setDisplayLimit] = useState(6);
   const searchRef = useRef<HTMLInputElement>(null);
+  const observerTarget = useRef<HTMLDivElement>(null);
   const today = toDateString(new Date());
 
   useEffect(() => {
-    async function loadArticles() {
-      const data = await getAllArticles();
-      setArticles(data);
+    async function loadData() {
+      const [articlesData, categoriesData] = await Promise.all([
+        getAllArticles(),
+        getAllCategories()
+      ]);
+      setArticles(articlesData);
+      setCategories(categoriesData);
     }
-    loadArticles();
+    loadData();
   }, []);
 
   useEffect(() => {
@@ -33,13 +42,42 @@ export default function StorefrontPage() {
     }
   }, [searchOpen]);
 
-  const filteredArticles = searchQuery
-    ? articles.filter(
-        (a) =>
-          a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          (a.slogan?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
-      )
-    : articles;
+  // Reset display limit when filters change
+  useEffect(() => {
+    setDisplayLimit(6);
+  }, [searchQuery, selectedCategory]);
+
+  const filteredArticles = articles.filter((a) => {
+    const matchesSearch = searchQuery
+      ? a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (a.slogan?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false)
+      : true;
+
+    const matchesCategory =
+      selectedCategory === "All" ? true : a.category === selectedCategory;
+
+    return matchesSearch && matchesCategory;
+  });
+
+  const displayedArticles = filteredArticles.slice(0, displayLimit);
+
+  // Infinite scroll observer
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setDisplayLimit((prev) => prev + 6);
+        }
+      },
+      { threshold: 0.1 }
+    );
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current);
+    }
+
+    return () => observer.disconnect();
+  }, [observerTarget]);
 
   const dateLabel = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
@@ -168,17 +206,48 @@ export default function StorefrontPage() {
         <div className="max-w-6xl mx-auto px-6 sm:px-10 py-14 sm:py-18">
 
           {/* Section header */}
-          <div className="flex items-center gap-6 mb-10">
-            <span className="text-sm font-medium tracking-wide text-gray-400">
-              {searchQuery
-                ? `${filteredArticles.length} result${filteredArticles.length !== 1 ? "s" : ""} for "${searchQuery}"`
-                : "All Articles"}
-            </span>
-            <div className="flex-1 h-px bg-white/5" />
-            {!searchQuery && (
-              <span className="text-sm text-gray-500 tracking-wide">
-                {articles.length} {articles.length === 1 ? "piece" : "pieces"} · {dateLabel}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-10">
+            <div className="flex items-center gap-6 flex-1">
+              <span className="text-sm font-medium tracking-wide text-gray-400">
+                {searchQuery
+                  ? `${filteredArticles.length} result${filteredArticles.length !== 1 ? "s" : ""} for "${searchQuery}"`
+                  : "All Articles"}
               </span>
+              <div className="flex-1 h-px bg-white/5" />
+              {!searchQuery && (
+                <span className="text-sm text-gray-500 tracking-wide">
+                  {filteredArticles.length} {filteredArticles.length === 1 ? "piece" : "pieces"} · {dateLabel}
+                </span>
+              )}
+            </div>
+
+            {/* Category Filter */}
+            {categories.length > 0 && (
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide">
+                <button
+                  onClick={() => setSelectedCategory("All")}
+                  className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-200 ${
+                    selectedCategory === "All"
+                      ? "bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                      : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/5"
+                  }`}
+                >
+                  All
+                </button>
+                {categories.map((c) => (
+                  <button
+                    key={c.id}
+                    onClick={() => setSelectedCategory(c.name)}
+                    className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-200 ${
+                      selectedCategory === c.name
+                        ? "bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.2)]"
+                        : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/5"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
             )}
           </div>
 
@@ -195,15 +264,29 @@ export default function StorefrontPage() {
               <StorefrontEmpty />
             )
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {filteredArticles.map((article, i) => (
-                <ProductCard
-                  key={article.id}
-                  article={article}
-                  today={today}
-                  index={i}
-                />
-              ))}
+            <div className="flex flex-col items-center">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
+                {displayedArticles.map((article, i) => (
+                  <ProductCard
+                    key={article.id}
+                    article={article}
+                    today={today}
+                    index={i}
+                  />
+                ))}
+              </div>
+              
+              {/* Sentinel Element for Infinite Scroll */}
+              {displayLimit < filteredArticles.length && (
+                <div ref={observerTarget} className="mt-12 mb-4 flex justify-center w-full">
+                  <div className="flex items-center gap-3 px-6 py-3 rounded-full bg-white/5 border border-white/10">
+                    <div className="w-4 h-4 border-2 border-white/20 border-t-blue-500 rounded-full animate-spin" />
+                    <span className="text-xs font-bold uppercase tracking-widest text-gray-400">
+                      Loading more...
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -240,7 +323,7 @@ function ProductCard({ article, today, index }: { article: Article; today: strin
     : 0;
 
   return (
-    <div className="group bg-zinc-900/50 border border-white/10 hover:border-white/20 hover:shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:-translate-y-1 transition-all duration-500 flex flex-col relative overflow-hidden rounded-2xl backdrop-blur-sm">
+    <div className="group bg-zinc-900/50 border border-white/10 hover:border-white/20 hover:shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:-translate-y-1 transition-all duration-500 flex flex-col relative overflow-hidden rounded-2xl backdrop-blur-sm cursor-pointer" onClick={() => window.location.href = `/articles/${article.id}`}>
       {/* Image area */}
       <div className={`relative h-72 overflow-hidden ${article.imageUrl ? "" : `bg-gradient-to-br from-zinc-800 to-zinc-950`}`}>
         {article.imageUrl ? (
@@ -286,9 +369,21 @@ function ProductCard({ article, today, index }: { article: Article; today: strin
 
       {/* Info */}
       <div className="p-5 flex flex-col flex-1">
-        <h3 className="font-bold text-lg text-white leading-snug mb-1 group-hover:text-blue-400 transition-colors duration-200 tracking-tight">
-          {article.name}
-        </h3>
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="font-bold text-lg text-white leading-snug group-hover:text-blue-400 transition-colors duration-200 tracking-tight">
+            {article.name}
+          </h3>
+          {article.stock > 0 ? (
+            <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full shrink-0">
+              In Stock: {article.stock}
+            </span>
+          ) : (
+            <span className="text-[10px] font-bold uppercase tracking-widest text-red-400 bg-red-500/10 border border-red-500/20 px-2 py-0.5 rounded-full shrink-0">
+              Out of Stock
+            </span>
+          )}
+        </div>
+        
         {article.slogan ? (
           <p className="text-[13px] text-gray-400 mb-4 leading-relaxed">{article.slogan}</p>
         ) : (

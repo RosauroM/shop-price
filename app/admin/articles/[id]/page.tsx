@@ -6,14 +6,16 @@ import Link from "next/link";
 import { useAuth } from "@/app/providers";
 import {
   getArticleById,
+  saveArticle,
   deleteArticle,
   updateArticleImage,
   addDiscount,
   deleteDiscount,
   resizeImage,
+  getAllCategories,
 } from "@/lib/storage";
 import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, classifyDiscount } from "@/lib/pricing";
-import type { Article } from "@/lib/types";
+import type { Article, Category } from "@/lib/types";
 import { DiscountStatusBadge } from "@/app/components/Badge";
 import { ShopLogo } from "@/app/components/ShopLogo";
 
@@ -24,9 +26,22 @@ export default function ManageArticlePage() {
   const { user, loading } = useAuth();
 
   const [article, setArticle] = useState<Article | undefined>();
+  const [categories, setCategories] = useState<Category[]>([]);
   const [date, setDate] = useState("");
   const [imgProcessing, setImgProcessing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: "",
+    category: "",
+    slogan: "",
+    netPrice: "",
+    salesPrice: "",
+    vatRatio: "",
+    stock: "",
+  });
+  const [editError, setEditError] = useState("");
 
   const [discountForm, setDiscountForm] = useState({
     startDate: "",
@@ -45,11 +60,63 @@ export default function ManageArticlePage() {
   }, [id]);
   useEffect(() => {
     setDate(toDateString(new Date()));
-    if (user) reload();
+    if (user) {
+      reload();
+      getAllCategories().then(setCategories);
+    }
   }, [reload, user]);
 
   if (loading || !user) return null;
   if (!article) return <div className="p-8 text-white">Loading or Not Found...</div>;
+
+  const handleEditClick = () => {
+    setEditError("");
+    setEditForm({
+      name: article.name,
+      category: article.category || "",
+      slogan: article.slogan || "",
+      netPrice: String(article.netPrice),
+      salesPrice: String(article.salesPrice),
+      vatRatio: String(article.vatRatio),
+      stock: String(article.stock ?? 0),
+    });
+    setIsEditing(true);
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditError("");
+
+    const net = parseFloat(editForm.netPrice);
+    const sales = parseFloat(editForm.salesPrice);
+    const vat = parseFloat(editForm.vatRatio);
+    const stockVal = parseInt(editForm.stock, 10);
+
+    if (!editForm.name.trim()) return setEditError("Article name is required.");
+    if (!editForm.category.trim()) return setEditError("Category is required.");
+    if (isNaN(net) || net < 0) return setEditError("Net price must be a positive number.");
+    if (isNaN(sales) || sales < 0) return setEditError("Sales price must be a positive number.");
+    if (isNaN(vat) || vat < 0) return setEditError("VAT ratio must be a positive number.");
+    if (sales < net) return setEditError("Sales price cannot be lower than Net price.");
+    if (isNaN(stockVal) || stockVal < 0) return setEditError("Stock must be a positive number.");
+
+    try {
+      await saveArticle({
+        ...article,
+        name: editForm.name.trim(),
+        category: editForm.category.trim(),
+        slogan: editForm.slogan.trim() || null,
+        netPrice: net,
+        salesPrice: sales,
+        vatRatio: vat,
+        stock: stockVal,
+      });
+      setIsEditing(false);
+      reload();
+    } catch (err: any) {
+      setEditError(err.message || "Failed to update article.");
+    }
+  };
 
   const activeDiscount = getActiveDiscount(article, date);
   const price = getEffectivePrice(article, date);
@@ -62,7 +129,7 @@ export default function ManageArticlePage() {
     if (!file.type.startsWith("image/")) return;
     setImgProcessing(true);
     const resized = await resizeImage(file);
-    await updateArticleImage(id, resized);
+    await updateArticleImage(id, resized || null);
     setImgProcessing(false);
     reload();
   }
@@ -80,15 +147,19 @@ export default function ManageArticlePage() {
     const overlap = article!.discounts.some((d) => startDate <= d.endDate && endDate >= d.startDate);
     if (overlap) return setFormError("This period overlaps with an existing discount.");
 
-    await addDiscount(id, {
-      id: Date.now().toString(36),
-      startDate,
-      endDate,
-      discountedPrice: dp,
-    });
+    try {
+      await addDiscount(id, {
+        id: Date.now().toString(36),
+        startDate,
+        endDate,
+        discountedPrice: dp,
+      });
 
-    setDiscountForm({ startDate: "", endDate: "", discountedPrice: "" });
-    reload();
+      setDiscountForm({ startDate: "", endDate: "", discountedPrice: "" });
+      reload();
+    } catch (err: any) {
+      setFormError(err.message || "Failed to add discount.");
+    }
   }
 
   const fmtDate = (dStr: string) =>
@@ -149,21 +220,122 @@ export default function ManageArticlePage() {
                 <p className="text-[13px] text-gray-400 mt-1.5">{article.slogan}</p>
               )}
             </div>
-            <button
-              onClick={() => {
-                if (!confirm(`Permanently delete "${article.name}"?`)) return;
-                deleteArticle(id);
-                router.push("/admin/dashboard");
-              }}
-              className="shrink-0 text-xs font-bold uppercase tracking-widest text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500/80 border border-red-500/30 px-4 py-2 rounded-full transition-all duration-200"
-            >
-              Delete
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleEditClick}
+                className="shrink-0 text-xs font-bold uppercase tracking-widest text-blue-400 hover:text-white bg-blue-500/10 hover:bg-blue-500/80 border border-blue-500/30 px-4 py-2 rounded-full transition-all duration-200"
+              >
+                Edit Details
+              </button>
+              <button
+                onClick={() => {
+                  if (!confirm(`Permanently delete "${article.name}"?`)) return;
+                  deleteArticle(id);
+                  router.push("/admin/dashboard");
+                }}
+                className="shrink-0 text-xs font-bold uppercase tracking-widest text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500/80 border border-red-500/30 px-4 py-2 rounded-full transition-all duration-200"
+              >
+                Delete
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <main className="max-w-3xl mx-auto px-6 sm:px-10 py-8 space-y-8 relative z-10 w-full">
+
+        {/* ── Edit Form Modal ── */}
+        {isEditing && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setIsEditing(false)} />
+            <div className="relative w-full max-w-2xl bg-zinc-900 border border-white/10 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-full">
+              <div className="p-6 border-b border-white/5 bg-white/[0.02] flex items-center justify-between">
+                <h2 className="text-[11px] font-bold uppercase tracking-widest text-white">Edit Article Details</h2>
+                <button onClick={() => setIsEditing(false)} className="text-gray-400 hover:text-white transition-colors">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="p-6 overflow-y-auto">
+                {editError && (
+                  <div className="mb-6 flex items-start gap-3 border border-red-500/30 bg-red-500/10 text-red-400 px-4 py-3 text-sm rounded-xl">
+                    <svg className="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    {editError}
+                  </div>
+                )}
+                <form id="editForm" onSubmit={handleSaveEdit} className="space-y-6">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Article Name <span className="text-blue-500">*</span></label>
+                      <input
+                        type="text" value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Category <span className="text-blue-500">*</span></label>
+                      <select
+                        value={editForm.category} onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50 appearance-none"
+                      >
+                        <option value="" disabled className="text-gray-500">Select...</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Stock <span className="text-blue-500">*</span></label>
+                      <input
+                        type="number" min="0" step="1" value={editForm.stock} onChange={(e) => setEditForm({ ...editForm, stock: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Slogan</label>
+                      <input
+                        type="text" value={editForm.slogan} onChange={(e) => setEditForm({ ...editForm, slogan: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Net Price <span className="text-blue-500">*</span></label>
+                      <input
+                        type="number" min="0" step="0.01" value={editForm.netPrice} onChange={(e) => setEditForm({ ...editForm, netPrice: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">Sales Price <span className="text-blue-500">*</span></label>
+                      <input
+                        type="number" min="0" step="0.01" value={editForm.salesPrice} onChange={(e) => setEditForm({ ...editForm, salesPrice: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-widest text-gray-400 mb-2">VAT Rate (%) <span className="text-blue-500">*</span></label>
+                      <input
+                        type="number" min="0" step="0.1" value={editForm.vatRatio} onChange={(e) => setEditForm({ ...editForm, vatRatio: e.target.value })}
+                        className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50"
+                      />
+                    </div>
+                  </div>
+                </form>
+              </div>
+              <div className="p-6 border-t border-white/5 bg-white/[0.02] flex justify-end gap-4">
+                <button onClick={() => setIsEditing(false)} className="text-xs font-bold uppercase tracking-widest text-gray-400 hover:text-white transition-colors px-4 py-2">
+                  Cancel
+                </button>
+                <button type="submit" form="editForm" className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-6 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] transition-all">
+                  Save Changes
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Product Image ── */}
         <section>
@@ -226,11 +398,17 @@ export default function ManageArticlePage() {
 
         {/* ── Specifications ── */}
         <section>
-          <SectionLabel>Specifications</SectionLabel>
-          <div className="mt-4 grid grid-cols-3 gap-px bg-white/5 rounded-xl overflow-hidden border border-white/10">
+          <div className="flex items-center gap-3 mb-4">
+            <SectionLabel>Specifications</SectionLabel>
+            <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">
+              {article.category || "Uncategorized"}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/5 rounded-xl overflow-hidden border border-white/10">
             <StatCell label="Net Price"   value={formatCurrency(article.netPrice)} />
             <StatCell label="Sales Price" value={formatCurrency(article.salesPrice)} />
             <StatCell label="VAT Rate"    value={`${article.vatRatio}%`} />
+            <StatCell label="Stock"       value={String(article.stock ?? 0)} />
           </div>
         </section>
 

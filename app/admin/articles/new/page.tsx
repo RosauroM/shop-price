@@ -4,9 +4,10 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useAuth } from "@/app/providers";
-import { saveArticle, resizeImage } from "@/lib/storage";
+import { saveArticle, resizeImage, getAllCategories } from "@/lib/storage";
 import { applyVat, formatCurrency } from "@/lib/pricing";
 import { ShopLogo } from "@/app/components/ShopLogo";
+import type { Category } from "@/lib/types";
 
 export default function NewArticlePage() {
   const router = useRouter();
@@ -18,13 +19,24 @@ export default function NewArticlePage() {
 
   const [form, setForm] = useState({
     name: "",
+    category: "",
     slogan: "",
     netPrice: "",
     salesPrice: "",
     vatRatio: "19",
+    stock: "0",
   });
   const [imageUrl, setImageUrl] = useState<string>("");
   const [error, setError] = useState("");
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  useEffect(() => {
+    async function loadCategories() {
+      const data = await getAllCategories();
+      setCategories(data);
+    }
+    if (user) loadCategories();
+  }, [user]);
 
   if (loading || !user) return null;
 
@@ -38,27 +50,35 @@ export default function NewArticlePage() {
     const net = parseFloat(form.netPrice);
     const sales = parseFloat(form.salesPrice);
     const vat = parseFloat(form.vatRatio);
+    const stockVal = parseInt(form.stock, 10);
 
     if (!form.name.trim()) return setError("Article name is required.");
+    if (!form.category.trim()) return setError("Category is required.");
     if (isNaN(net) || net < 0) return setError("Net price must be a positive number.");
     if (isNaN(sales) || sales < 0) return setError("Sales price must be a positive number.");
     if (isNaN(vat) || vat < 0) return setError("VAT ratio must be a positive number.");
     if (sales < net) return setError("Sales price cannot be lower than Net price.");
+    if (isNaN(stockVal) || stockVal < 0) return setError("Stock must be a positive number.");
 
     const id = Date.now().toString(36) + Math.random().toString(36).substring(2);
 
-    await saveArticle({
-      id,
-      name: form.name.trim(),
-      slogan: form.slogan.trim() || undefined,
-      imageUrl: imageUrl || undefined,
-      netPrice: net,
-      salesPrice: sales,
-      vatRatio: vat,
-      discounts: [],
-    });
-
-    router.push("/admin/dashboard");
+    try {
+      await saveArticle({
+        id,
+        name: form.name.trim(),
+        category: form.category.trim(),
+        slogan: form.slogan.trim() || null,
+        imageUrl: imageUrl || null,
+        netPrice: net,
+        salesPrice: sales,
+        vatRatio: vat,
+        stock: stockVal,
+        discounts: [],
+      });
+      router.push("/admin/dashboard");
+    } catch (err: any) {
+      setError(err.message || "Failed to save article. Please try again.");
+    }
   };
 
   const previewSales = parseFloat(form.salesPrice);
@@ -155,6 +175,38 @@ export default function NewArticlePage() {
                 {/* Identity */}
                 <FormSection title="Identity">
                   <Field label="Article Name" required name="name" value={form.name} onChange={handleChange} placeholder="e.g. Cashmere Overcoat" />
+                  
+                  <div className="mb-4">
+                    <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                      Category <span className="text-blue-500">*</span>
+                    </label>
+                    {categories.length === 0 ? (
+                      <div className="flex items-center gap-3">
+                        <select disabled className="w-full bg-white/5 border border-white/10 text-gray-500 text-sm font-medium px-4 py-3 rounded-xl focus:outline-none cursor-not-allowed">
+                          <option>No categories available</option>
+                        </select>
+                        <Link href="/admin/categories" className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-4 py-3 rounded-xl whitespace-nowrap transition-colors">
+                          Add Category
+                        </Link>
+                      </div>
+                    ) : (
+                      <select
+                        name="category"
+                        value={form.category}
+                        onChange={(e: any) => handleChange(e)}
+                        required
+                        className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
+                      >
+                        <option value="" disabled className="text-gray-500">Select a category...</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.name} className="bg-zinc-900 text-white">
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+
                   <Field label="Slogan" name="slogan" value={form.slogan} onChange={handleChange} placeholder="e.g. Effortless warmth, redefined" />
                 </FormSection>
 
@@ -163,11 +215,14 @@ export default function NewArticlePage() {
                   <ImageUpload imageUrl={imageUrl} onChange={setImageUrl} />
                 </FormSection>
 
-                {/* Pricing */}
-                <FormSection title="Pricing">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                {/* Pricing & Inventory */}
+                <FormSection title="Pricing & Inventory">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 mb-5">
                     <Field label="Net Price ($)" required hint="Your cost — floor for all discounts" name="netPrice" value={form.netPrice} onChange={handleChange} type="number" placeholder="0.00" min="0" step="0.01" />
                     <Field label="Sales Price ($)" required hint="Regular price shown to customers" name="salesPrice" value={form.salesPrice} onChange={handleChange} type="number" placeholder="0.00" min="0" step="0.01" />
+                  </div>
+                  <div className="max-w-[180px]">
+                    <Field label="Stock Count" required hint="Number of items in stock" name="stock" value={form.stock} onChange={handleChange} type="number" placeholder="0" min="0" step="1" />
                   </div>
                 </FormSection>
 

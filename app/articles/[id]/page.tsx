@@ -133,7 +133,7 @@ export default function CustomerArticlePage({
               
               <div className="mb-4">
                 <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-400 mb-2 block">
-                  Premium Article
+                  {article.category || "Premium Article"}
                 </span>
                 <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight leading-[1.1]">
                   {article.name}
@@ -167,14 +167,28 @@ export default function CustomerArticlePage({
               </div>
 
               <div className="space-y-4">
-                <button className="w-full bg-white text-black font-bold py-4 rounded-full shadow-[0_0_30px_rgba(255,255,255,0.15)] hover:bg-gray-200 hover:shadow-[0_0_40px_rgba(255,255,255,0.25)] hover:-translate-y-0.5 transition-all duration-300">
-                  Add to Cart
+                <button 
+                  disabled={(article.stock ?? 0) <= 0}
+                  className="w-full bg-white text-black font-bold py-4 rounded-full shadow-[0_0_30px_rgba(255,255,255,0.15)] hover:bg-gray-200 hover:shadow-[0_0_40px_rgba(255,255,255,0.25)] hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:bg-white disabled:hover:shadow-[0_0_30px_rgba(255,255,255,0.15)] disabled:cursor-not-allowed"
+                >
+                  {(article.stock ?? 0) > 0 ? "Add to Cart" : "Out of Stock"}
                 </button>
                 <div className="flex items-center justify-center gap-2 text-xs font-medium text-gray-500">
-                  <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-                  </svg>
-                  In stock and ready to ship
+                  {(article.stock ?? 0) > 0 ? (
+                    <>
+                      <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                      </svg>
+                      In stock ({article.stock} available)
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                      Currently unavailable
+                    </>
+                  )}
                 </div>
               </div>
             </div>

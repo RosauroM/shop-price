@@ -3,10 +3,11 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import * as XLSX from "xlsx";
 import { useAuth } from "@/app/providers";
-import { getAllArticles } from "@/lib/storage";
+import { getAllArticles, getAllCategories } from "@/lib/storage";
 import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, classifyDiscount } from "@/lib/pricing";
-import type { Article } from "@/lib/types";
+import type { Article, Category } from "@/lib/types";
 import { DateSelector } from "@/app/components/DateSelector";
 import { StatusBadge } from "@/app/components/Badge";
 import type { ArticleStatus } from "@/app/components/Badge";
@@ -17,6 +18,9 @@ export default function AdminDashboard() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
   const [articles, setArticles] = useState<Article[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategory, setSelectedCategory] = useState<string>("All");
+  const [searchQuery, setSearchQuery] = useState("");
   const [date, setDate] = useState("");
   const today = toDateString(new Date());
 
@@ -25,21 +29,78 @@ export default function AdminDashboard() {
   }, [loading, user, router]);
 
   useEffect(() => {
-    async function loadArticles() {
-      const data = await getAllArticles();
-      setArticles(data);
+    async function loadData() {
+      const [articlesData, categoriesData] = await Promise.all([
+        getAllArticles(),
+        getAllCategories()
+      ]);
+      setArticles(articlesData);
+      setCategories(categoriesData);
     }
     setDate(today);
-    loadArticles();
+    loadData();
   }, [today]);
 
   if (loading || !user) return null;
+
+  const filteredArticles = articles.filter(article => {
+    const searchLower = searchQuery.toLowerCase();
+    
+    // Category Filter
+    if (selectedCategory !== "All" && article.category !== selectedCategory) return false;
+    
+    // Search Query Filter
+    return (
+      article.name.toLowerCase().includes(searchLower) || 
+      (article.category && article.category.toLowerCase().includes(searchLower)) ||
+      (article.slogan && article.slogan.toLowerCase().includes(searchLower))
+    );
+  });
 
   const activeCount = articles.filter((a) => getActiveDiscount(a, date)).length;
   const scheduledCount = articles.filter((a) => !getActiveDiscount(a, date) && a.discounts.some((d) => d.startDate > date)).length;
 
   const fmtDate = (dStr: string) =>
     new Date(dStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  const exportToExcel = () => {
+    // Format data for Excel
+    const data = filteredArticles.map(article => {
+      const price = getEffectivePrice(article, date);
+      const grossPrice = applyVat(price, article.vatRatio);
+      const activeDiscount = getActiveDiscount(article, date);
+      const isCapped = activeDiscount !== undefined && activeDiscount.discountedPrice < article.netPrice;
+      
+      const status = activeDiscount
+        ? "Active Discount"
+        : article.discounts.some((d) => d.startDate > date)
+        ? "Scheduled Discount"
+        : "No Discount";
+
+      return {
+        "ID": article.id,
+        "Name": article.name,
+        "Category": article.category || "Uncategorized",
+        "Slogan": article.slogan || "",
+        "Stock": article.stock ?? 0,
+        "Net Price": article.netPrice,
+        "Base Sales Price": article.salesPrice,
+        "VAT Rate (%)": article.vatRatio,
+        "Status": status,
+        "Effective Price (Excl. VAT)": price,
+        "Effective Price (Incl. VAT)": grossPrice,
+        "Floor Applied": isCapped ? "Yes" : "No"
+      };
+    });
+
+    // Create a new workbook and add the data
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Prices");
+
+    // Generate Excel file and trigger download
+    XLSX.writeFile(workbook, `premia_prices_${date}.xlsx`);
+  };
 
   return (
     <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
@@ -69,6 +130,18 @@ export default function AdminDashboard() {
           </div>
           <div className="flex items-center gap-5">
             <Link
+              href="/admin/categories"
+              className="hidden sm:inline-flex items-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
+            >
+              Categories
+            </Link>
+            <Link
+              href="/admin/discounts"
+              className="hidden sm:inline-flex items-center gap-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
+            >
+              Bulk Discounts
+            </Link>
+            <Link
               href="/"
               className="hidden sm:inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
             >
@@ -92,16 +165,27 @@ export default function AdminDashboard() {
             <span className="text-gray-600">›</span>
             <span className="text-gray-300">Articles</span>
           </div>
-          {/* New Article */}
-          <Link
-            href="/admin/articles/new"
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:-translate-y-0.5 transition-all duration-300 shrink-0"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            New Article
-          </Link>
+          {/* Actions */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={exportToExcel}
+              className="inline-flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+              Export Excel
+            </button>
+            <Link
+              href="/admin/articles/new"
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:-translate-y-0.5 transition-all duration-300 shrink-0"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              New Article
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -115,13 +199,55 @@ export default function AdminDashboard() {
                 <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-400">Articles</span>
               </div>
               <h1 className="font-extrabold text-3xl text-white tracking-tight">
-                {articles.length === 0
+                {filteredArticles.length === 0
                   ? "No articles yet"
-                  : `${articles.length} Article${articles.length !== 1 ? "s" : ""}`}
+                  : `${filteredArticles.length} Article${filteredArticles.length !== 1 ? "s" : ""}`}
               </h1>
             </div>
-            <DateSelector date={date} today={today} onChange={setDate} />
+            
+            <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-4">
+              <div className="relative w-full sm:w-64">
+                <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  placeholder="Search articles..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium pl-10 pr-4 py-2.5 rounded-xl focus:outline-none focus:border-blue-500/50 transition-all placeholder:text-gray-600"
+                />
+              </div>
+              <DateSelector date={date} today={today} onChange={setDate} />
+            </div>
           </div>
+
+          {/* Category Filter Bar */}
+          {categories.length > 0 && (
+            <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl p-2 mb-8 flex flex-wrap gap-2 shadow-xl">
+              <button
+                onClick={() => setSelectedCategory("All")}
+                className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
+                  selectedCategory === "All" ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
+                }`}
+              >
+                All
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setSelectedCategory(c.name)}
+                  className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
+                    selectedCategory === c.name ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Stats strip */}
           {articles.length > 0 && (
@@ -170,6 +296,7 @@ export default function AdminDashboard() {
                 <thead>
                   <tr className="border-b border-white/5 bg-black/20">
                     <th className="px-6 py-4 text-left text-[10px] font-bold tracking-widest uppercase text-gray-500">Article</th>
+                    <th className="px-4 py-4 text-center text-[10px] font-bold tracking-widest uppercase text-gray-500">Stock</th>
                     <th className="px-4 py-4 text-right text-[10px] font-bold tracking-widest uppercase text-gray-500">Net</th>
                     <th className="px-4 py-4 text-right text-[10px] font-bold tracking-widest uppercase text-gray-500">Sales</th>
                     <th className="px-4 py-4 text-center text-[10px] font-bold tracking-widest uppercase text-gray-500">VAT</th>
@@ -180,7 +307,7 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {articles.map((article) => (
+                  {filteredArticles.map((article) => (
                     <ArticleRow key={article.id} article={article} date={date} />
                   ))}
                 </tbody>
@@ -238,11 +365,21 @@ function ArticleRow({ article, date }: { article: Article; date: string }) {
           )}
           <div>
             <p className="font-bold text-white leading-snug tracking-tight">{article.name}</p>
-            {article.slogan && (
-              <p className="text-[13px] text-gray-400 mt-0.5 leading-snug">{article.slogan}</p>
-            )}
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">
+                {article.category || "Uncategorized"}
+              </span>
+              {article.slogan && (
+                <span className="text-[13px] text-gray-400 leading-snug truncate max-w-[200px]">{article.slogan}</span>
+              )}
+            </div>
           </div>
         </div>
+      </td>
+      <td className="px-4 py-4 text-center">
+        <span className={`tabular-nums text-sm font-bold ${article.stock > 0 ? "text-emerald-400" : "text-red-400"}`}>
+          {article.stock ?? 0}
+        </span>
       </td>
       <td className="px-4 py-4 text-right">
         <span className="tabular-nums text-gray-400 text-sm font-medium">{formatCurrency(article.netPrice)}</span>
