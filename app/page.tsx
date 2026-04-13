@@ -1,5 +1,4 @@
 "use client";
-import { app } from "@/lib/firebase";
 import { useState, useEffect, useRef } from "react";
 import { getAllArticles, getAllCategories } from "@/lib/storage";
 import {
@@ -11,7 +10,6 @@ import {
 } from "@/lib/pricing";
 import type { Article, Category } from "@/lib/types";
 import { ShopLogo } from "@/app/components/ShopLogo";
-import Link from "next/link";
 
 export default function StorefrontPage() {
   const [articles, setArticles] = useState<Article[]>([]);
@@ -207,46 +205,40 @@ export default function StorefrontPage() {
 
           {/* Section header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-10">
-            <div className="flex items-center gap-6 flex-1">
-              <span className="text-sm font-medium tracking-wide text-gray-400">
+            <div className="flex items-center gap-6 flex-1 min-w-0">
+              <span className="text-sm font-medium tracking-wide text-gray-400 shrink-0">
                 {searchQuery
                   ? `${filteredArticles.length} result${filteredArticles.length !== 1 ? "s" : ""} for "${searchQuery}"`
+                  : selectedCategory !== "All"
+                  ? `${filteredArticles.length} Article${filteredArticles.length !== 1 ? "s" : ""} in ${selectedCategory}`
                   : "All Articles"}
               </span>
               <div className="flex-1 h-px bg-white/5" />
               {!searchQuery && (
-                <span className="text-sm text-gray-500 tracking-wide">
+                <span className="text-sm text-gray-500 tracking-wide shrink-0">
                   {filteredArticles.length} {filteredArticles.length === 1 ? "piece" : "pieces"} · {dateLabel}
                 </span>
               )}
             </div>
 
-            {/* Category Filter */}
+            {/* Category Dropdown */}
             {categories.length > 0 && (
-              <div className="flex items-center gap-2 overflow-x-auto pb-2 sm:pb-0 scrollbar-hide">
-                <button
-                  onClick={() => setSelectedCategory("All")}
-                  className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-200 ${
-                    selectedCategory === "All"
-                      ? "bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.2)]"
-                      : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/5"
-                  }`}
+              <div className="relative shrink-0">
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="appearance-none bg-white/5 border border-white/10 text-white text-sm font-medium pl-3 pr-8 py-2 rounded-xl focus:outline-none focus:border-blue-500/50 transition-all cursor-pointer"
                 >
-                  All
-                </button>
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setSelectedCategory(c.name)}
-                    className={`px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest whitespace-nowrap transition-all duration-200 ${
-                      selectedCategory === c.name
-                        ? "bg-white text-black shadow-[0_0_15px_rgba(255,255,255,0.2)]"
-                        : "bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/5"
-                    }`}
-                  >
-                    {c.name}
-                  </button>
-                ))}
+                  <option value="All" className="bg-zinc-900">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
               </div>
             )}
           </div>
@@ -266,12 +258,11 @@ export default function StorefrontPage() {
           ) : (
             <div className="flex flex-col items-center">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 w-full">
-                {displayedArticles.map((article, i) => (
+                {displayedArticles.map((article) => (
                   <ProductCard
                     key={article.id}
                     article={article}
                     today={today}
-                    index={i}
                   />
                 ))}
               </div>
@@ -313,7 +304,7 @@ export default function StorefrontPage() {
 
 // ─── Product card ──────────────────────────────────────────────────────────────
 
-function ProductCard({ article, today, index }: { article: Article; today: string; index: number }) {
+function ProductCard({ article, today }: { article: Article; today: string }) {
   const discount = getActiveDiscount(article, today);
   const effectivePrice = getEffectivePrice(article, today);
   const grossPrice = applyVat(effectivePrice, article.vatRatio);

@@ -6,7 +6,7 @@ import Link from "next/link";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/app/providers";
 import { getAllArticles, getAllCategories } from "@/lib/storage";
-import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, classifyDiscount } from "@/lib/pricing";
+import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString } from "@/lib/pricing";
 import type { Article, Category } from "@/lib/types";
 import { DateSelector } from "@/app/components/DateSelector";
 import { StatusBadge } from "@/app/components/Badge";
@@ -57,8 +57,8 @@ export default function AdminDashboard() {
     );
   });
 
-  const activeCount = articles.filter((a) => getActiveDiscount(a, date)).length;
-  const scheduledCount = articles.filter((a) => !getActiveDiscount(a, date) && a.discounts.some((d) => d.startDate > date)).length;
+  const activeCount = filteredArticles.filter((a) => getActiveDiscount(a, date)).length;
+  const scheduledCount = filteredArticles.filter((a) => !getActiveDiscount(a, date) && a.discounts.some((d) => d.startDate > date)).length;
 
   const fmtDate = (dStr: string) =>
     new Date(dStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -205,7 +205,26 @@ export default function AdminDashboard() {
               </h1>
             </div>
             
-            <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-4">
+            <div className="w-full sm:w-auto flex flex-col sm:flex-row items-center gap-3">
+              {/* Category dropdown */}
+              <div className="relative w-full sm:w-48">
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full appearance-none bg-white/5 border border-white/10 text-white text-sm font-medium pl-3 pr-8 py-2.5 rounded-xl focus:outline-none focus:border-blue-500/50 transition-all cursor-pointer"
+                >
+                  <option value="All" className="bg-zinc-900">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
+              </div>
+              {/* Search */}
               <div className="relative w-full sm:w-64">
                 <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
                   <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -224,41 +243,18 @@ export default function AdminDashboard() {
             </div>
           </div>
 
-          {/* Category Filter Bar */}
-          {categories.length > 0 && (
-            <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl p-2 mb-8 flex flex-wrap gap-2 shadow-xl">
-              <button
-                onClick={() => setSelectedCategory("All")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
-                  selectedCategory === "All" ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
-                }`}
-              >
-                All
-              </button>
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedCategory(c.name)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
-                    selectedCategory === c.name ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
-                  }`}
-                >
-                  {c.name}
-                </button>
-              ))}
-            </div>
-          )}
-
           {/* Stats strip */}
           {articles.length > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/5 rounded-xl overflow-hidden border border-white/10">
               {[
-                { label: "Total", value: String(articles.length) },
+                { label: "Total", value: String(filteredArticles.length) },
                 { label: "Active Discounts", value: String(activeCount), highlight: activeCount > 0 },
                 { label: "Scheduled", value: String(scheduledCount) },
                 {
                   label: "Avg. Sales Price",
-                  value: formatCurrency(articles.reduce((s, a) => s + a.salesPrice, 0) / articles.length),
+                  value: filteredArticles.length > 0
+                    ? formatCurrency(filteredArticles.reduce((s, a) => s + a.salesPrice, 0) / filteredArticles.length)
+                    : "—",
                 },
               ].map(({ label, value, highlight }) => (
                 <div key={label} className="bg-zinc-900/80 backdrop-blur-sm px-5 py-4">
@@ -274,7 +270,7 @@ export default function AdminDashboard() {
       </div>
 
       {/* ── Content ── */}
-      <main className="flex-1 max-w-6xl mx-auto w-full px-6 sm:px-10 py-8 relative z-10">
+      <main className="flex-1 w-full px-6 sm:px-10 py-8 relative z-10">
         {articles.length === 0 ? (
           <AdminEmptyState />
         ) : (
@@ -291,7 +287,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* Table */}
-            <div className="overflow-x-auto">
+            <div>
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/5 bg-black/20">

@@ -68,7 +68,7 @@ export default function BulkDiscountsPage() {
     }
   };
 
-  const handleApplyDiscounts = async (e: React.FormEvent) => {
+  const handleApplyDiscounts = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
     setSuccessMsg("");
@@ -190,7 +190,7 @@ export default function BulkDiscountsPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-4">
                   <div>
                     <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">Start Date</label>
                     <input
@@ -198,7 +198,7 @@ export default function BulkDiscountsPage() {
                       required
                       value={form.startDate}
                       onChange={(e) => setForm({...form, startDate: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all appearance-none"
+                      className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all"
                       style={{ colorScheme: "dark" }}
                     />
                   </div>
@@ -209,7 +209,7 @@ export default function BulkDiscountsPage() {
                       required
                       value={form.endDate}
                       onChange={(e) => setForm({...form, endDate: e.target.value})}
-                      className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all appearance-none"
+                      className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all"
                       style={{ colorScheme: "dark" }}
                     />
                   </div>
@@ -237,26 +237,25 @@ export default function BulkDiscountsPage() {
           <div className="lg:col-span-2 flex flex-col gap-6">
             
             {/* Filter Bar */}
-            <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl p-2 flex flex-wrap gap-2 shadow-xl">
-              <button
-                onClick={() => setSelectedCategory("All")}
-                className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
-                  selectedCategory === "All" ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
-                }`}
-              >
-                All
-              </button>
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => setSelectedCategory(c.name)}
-                  className={`px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-widest transition-colors ${
-                    selectedCategory === c.name ? "bg-white text-black shadow-lg" : "text-gray-400 hover:text-white hover:bg-white/5"
-                  }`}
+            <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-xl">
+              <span className="text-[11px] font-bold uppercase tracking-widest text-gray-500 shrink-0">Category</span>
+              <div className="relative flex-1 max-w-xs">
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="w-full appearance-none bg-white/5 border border-white/10 text-white text-sm font-medium pl-3 pr-8 py-2 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all cursor-pointer"
                 >
-                  {c.name}
-                </button>
-              ))}
+                  <option value="All" className="bg-zinc-900">All Categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                  ))}
+                </select>
+                <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </div>
+              </div>
             </div>
 
             {/* Articles List */}
