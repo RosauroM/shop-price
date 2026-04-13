@@ -1,5 +1,5 @@
 "use client";
-
+import { app } from "@/lib/firebase";
 import { useState, useEffect, useRef } from "react";
 import { getAllArticles } from "@/lib/storage";
 import {
@@ -20,7 +20,11 @@ export default function StorefrontPage() {
   const today = toDateString(new Date());
 
   useEffect(() => {
-    setArticles(getAllArticles());
+    async function loadArticles() {
+      const data = await getAllArticles();
+      setArticles(data);
+    }
+    loadArticles();
   }, []);
 
   useEffect(() => {

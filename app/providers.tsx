@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut as firebaseSignOut, User as FirebaseUser } from "firebase/auth";
+import { auth } from "@/lib/firebase";
 
 export interface User {
   uid: string;
@@ -23,26 +25,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedAuth = localStorage.getItem("admin_auth");
-    if (savedAuth === "true") {
-      setUser({ uid: "admin", email: "admin@premia.shop", displayName: "Administrator", photoURL: null });
-    }
-    setLoading(false);
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser: FirebaseUser | null) => {
+      if (firebaseUser) {
+        setUser({
+          uid: firebaseUser.uid,
+          email: firebaseUser.email,
+          displayName: firebaseUser.displayName || "Admin",
+          photoURL: firebaseUser.photoURL,
+        });
+      } else {
+        setUser(null);
+      }
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const signIn = async (id?: string, password?: string) => {
-    await new Promise((resolve) => setTimeout(resolve, 600));
-    if (id === "admin" && password === "123123123") {
-      localStorage.setItem("admin_auth", "true");
-      setUser({ uid: "admin", email: "admin@premia.shop", displayName: "Administrator", photoURL: null });
-    } else {
-      throw new Error("Invalid ID or password");
-    }
+    if (!id || !password) throw new Error("ID and password are required");
+    // Since Firebase requires an email format, we map the ID "admin" to a valid email structure
+    const email = id === "admin" ? "admin@premia.shop" : id;
+    await signInWithEmailAndPassword(auth, email, password);
   };
 
   const signOut = async () => {
-    localStorage.removeItem("admin_auth");
-    setUser(null);
+    await firebaseSignOut(auth);
   };
 
   return <AuthContext.Provider value={{ user, loading, signIn, signOut }}>{children}</AuthContext.Provider>;

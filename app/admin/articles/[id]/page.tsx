@@ -39,7 +39,10 @@ export default function ManageArticlePage() {
     if (!loading && !user) router.replace("/admin");
   }, [loading, user, router]);
 
-  const reload = useCallback(() => setArticle(getArticleById(id)), [id]);
+  const reload = useCallback(async () => {
+    const data = await getArticleById(id);
+    setArticle(data);
+  }, [id]);
   useEffect(() => {
     setDate(toDateString(new Date()));
     if (user) reload();
@@ -59,12 +62,12 @@ export default function ManageArticlePage() {
     if (!file.type.startsWith("image/")) return;
     setImgProcessing(true);
     const resized = await resizeImage(file);
-    updateArticleImage(id, resized);
+    await updateArticleImage(id, resized);
     setImgProcessing(false);
     reload();
   }
 
-  function handleAddDiscount(e: React.FormEvent) {
+  async function handleAddDiscount(e: React.FormEvent) {
     e.preventDefault();
     setFormError("");
     const { startDate, endDate, discountedPrice } = discountForm;
@@ -77,7 +80,7 @@ export default function ManageArticlePage() {
     const overlap = article!.discounts.some((d) => startDate <= d.endDate && endDate >= d.startDate);
     if (overlap) return setFormError("This period overlaps with an existing discount.");
 
-    addDiscount(id, {
+    await addDiscount(id, {
       id: Date.now().toString(36),
       startDate,
       endDate,
@@ -334,7 +337,7 @@ export default function ManageArticlePage() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <button
-                            onClick={() => { deleteDiscount(id, d.id); reload(); }}
+                            onClick={async () => { await deleteDiscount(id, d.id); reload(); }}
                             className="text-[11px] font-bold uppercase tracking-widest text-gray-500 hover:text-red-400 transition-colors"
                           >
                             Remove

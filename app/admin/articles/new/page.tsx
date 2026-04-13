@@ -32,7 +32,7 @@ export default function NewArticlePage() {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     const net = parseFloat(form.netPrice);
@@ -47,7 +47,7 @@ export default function NewArticlePage() {
 
     const id = Date.now().toString(36) + Math.random().toString(36).substring(2);
 
-    saveArticle({
+    await saveArticle({
       id,
       name: form.name.trim(),
       slogan: form.slogan.trim() || undefined,

@@ -21,13 +21,16 @@ export default function CustomerArticlePage({
   const today = toDateString(new Date());
 
   useEffect(() => {
-    const data = getArticleById(id);
-    if (!data) {
-      router.replace("/");
-    } else {
-      setArticle(data);
+    async function loadArticle() {
+      const data = await getArticleById(id);
+      if (!data) {
+        router.replace("/");
+      } else {
+        setArticle(data);
+      }
+      setLoading(false);
     }
-    setLoading(false);
+    loadArticle();
   }, [id, router]);
 
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-white">Loading...</div>;

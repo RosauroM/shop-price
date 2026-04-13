@@ -25,8 +25,12 @@ export default function AdminDashboard() {
   }, [loading, user, router]);
 
   useEffect(() => {
+    async function loadArticles() {
+      const data = await getAllArticles();
+      setArticles(data);
+    }
     setDate(today);
-    setArticles(getAllArticles());
+    loadArticles();
   }, [today]);
 
   if (loading || !user) return null;

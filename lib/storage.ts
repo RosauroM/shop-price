@@ -1,62 +1,76 @@
+import { collection, doc, getDocs, getDoc, setDoc, deleteDoc } from "firebase/firestore";
+import { db } from "./firebase";
 import type { Article } from "./types";
 
-const STORAGE_KEY = "premia_articles";
+const COLLECTION_NAME = "articles";
 
-function getStoredArticles(): Article[] {
-  if (typeof window === "undefined") return [];
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (stored) return JSON.parse(stored);
-  return [];
-}
-
-function saveArticles(articles: Article[]) {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(articles));
+export async function getAllArticles(): Promise<Article[]> {
+  try {
+    const querySnapshot = await getDocs(collection(db, COLLECTION_NAME));
+    const articles: Article[] = [];
+    querySnapshot.forEach((doc) => {
+      articles.push(doc.data() as Article);
+    });
+    return articles;
+  } catch (error) {
+    console.error("Error getting articles:", error);
+    return [];
   }
 }
 
-export function getAllArticles(): Article[] {
-  return getStoredArticles();
+export async function getArticleById(id: string): Promise<Article | undefined> {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists()) {
+      return docSnap.data() as Article;
+    }
+    return undefined;
+  } catch (error) {
+    console.error("Error getting article:", error);
+    return undefined;
+  }
 }
 
-export function getArticleById(id: string): Article | undefined {
-  return getStoredArticles().find((a) => a.id === id);
+export async function saveArticle(article: Article): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, article.id);
+    await setDoc(docRef, article);
+  } catch (error) {
+    console.error("Error saving article:", error);
+  }
 }
 
-export function saveArticle(article: Article): void {
-  const articles = getStoredArticles();
-  const index = articles.findIndex((a) => a.id === article.id);
-  if (index >= 0) articles[index] = article;
-  else articles.push(article);
-  saveArticles(articles);
+export async function deleteArticle(id: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, id);
+    await deleteDoc(docRef);
+  } catch (error) {
+    console.error("Error deleting article:", error);
+  }
 }
 
-export function deleteArticle(id: string): void {
-  const articles = getStoredArticles().filter((a) => a.id !== id);
-  saveArticles(articles);
-}
-
-export function updateArticleImage(id: string, imageUrl?: string): void {
-  const article = getArticleById(id);
+export async function updateArticleImage(id: string, imageUrl?: string): Promise<void> {
+  const article = await getArticleById(id);
   if (article) {
     article.imageUrl = imageUrl;
-    saveArticle(article);
+    await saveArticle(article);
   }
 }
 
-export function addDiscount(id: string, discount: any): void {
-  const article = getArticleById(id);
+export async function addDiscount(id: string, discount: any): Promise<void> {
+  const article = await getArticleById(id);
   if (article) {
     article.discounts.push(discount);
-    saveArticle(article);
+    await saveArticle(article);
   }
 }
 
-export function deleteDiscount(id: string, discountId: string): void {
-  const article = getArticleById(id);
+export async function deleteDiscount(id: string, discountId: string): Promise<void> {
+  const article = await getArticleById(id);
   if (article) {
     article.discounts = article.discounts.filter((d) => d.id !== discountId);
-    saveArticle(article);
+    await saveArticle(article);
   }
 }
 
