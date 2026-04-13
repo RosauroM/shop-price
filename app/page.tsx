@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { getAllArticles, getAllCategories } from "@/lib/storage";
 import {
   getEffectivePrice,
@@ -19,7 +19,8 @@ export default function StorefrontPage() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [displayLimit, setDisplayLimit] = useState(6);
   const searchRef = useRef<HTMLInputElement>(null);
-  const observerTarget = useRef<HTMLDivElement>(null);
+  const [sentinelEl, setSentinelEl] = useState<HTMLDivElement | null>(null);
+  const sentinelRef = useCallback((node: HTMLDivElement | null) => setSentinelEl(node), []);
   const today = toDateString(new Date());
 
   useEffect(() => {
@@ -61,6 +62,7 @@ export default function StorefrontPage() {
 
   // Infinite scroll observer
   useEffect(() => {
+    if (!sentinelEl) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0].isIntersecting) {
@@ -69,13 +71,9 @@ export default function StorefrontPage() {
       },
       { threshold: 0.1 }
     );
-
-    if (observerTarget.current) {
-      observer.observe(observerTarget.current);
-    }
-
+    observer.observe(sentinelEl);
     return () => observer.disconnect();
-  }, [observerTarget]);
+  }, [sentinelEl]);
 
   const dateLabel = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 
@@ -269,7 +267,7 @@ export default function StorefrontPage() {
               
               {/* Sentinel Element for Infinite Scroll */}
               {displayLimit < filteredArticles.length && (
-                <div ref={observerTarget} className="mt-12 mb-4 flex justify-center w-full">
+                <div ref={sentinelRef} className="mt-12 mb-4 flex justify-center w-full">
                   <div className="flex items-center gap-3 px-6 py-3 rounded-full bg-white/5 border border-white/10">
                     <div className="w-4 h-4 border-2 border-white/20 border-t-blue-500 rounded-full animate-spin" />
                     <span className="text-xs font-bold uppercase tracking-widest text-gray-400">
