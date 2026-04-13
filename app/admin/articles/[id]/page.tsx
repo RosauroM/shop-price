@@ -83,7 +83,7 @@ export default function ManageArticlePage() {
     setIsEditing(true);
   };
 
-  const handleSaveEdit = async (e: React.FormEvent) => {
+  const handleSaveEdit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setEditError("");
 
@@ -134,7 +134,7 @@ export default function ManageArticlePage() {
     reload();
   }
 
-  async function handleAddDiscount(e: React.FormEvent) {
+  async function handleAddDiscount(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setFormError("");
     const { startDate, endDate, discountedPrice } = discountForm;
@@ -364,7 +364,7 @@ export default function ManageArticlePage() {
                         Change Image
                       </button>
                       <button
-                        onClick={() => { updateArticleImage(id, undefined); reload(); }}
+                        onClick={() => { updateArticleImage(id, null); reload(); }}
                         className="bg-black/50 text-white border border-white/20 text-[11px] font-bold uppercase tracking-widest px-5 py-2.5 rounded-full hover:bg-black/80 transition-all duration-200"
                       >
                         Remove
