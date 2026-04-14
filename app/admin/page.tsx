@@ -34,28 +34,7 @@ export default function AdminLogin() {
 
   return (
     <>
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="md" />
-            <span className="font-bold text-white text-lg tracking-tight uppercase">
-              Premia
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 border border-white/10 px-2 py-0.5 rounded-sm">
-              Admin
-            </span>
-          </div>
-          <Link
-            href="/storefront"
-            className="text-xs font-medium tracking-wide text-gray-400 hover:text-white transition-colors"
-          >
-            ← Storefront
-          </Link>
-        </div>
-      </header>
-
-      {/* ── Main split layout ── */}
+      {/* ── Main Content ── */}
       <main className="flex-1 flex flex-col lg:flex-row relative z-10">
 
         {/* Left: marketing */}
