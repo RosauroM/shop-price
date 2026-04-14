@@ -3,9 +3,9 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { getArticleById } from "@/lib/storage";
+import { getArticleById, getAllCategories } from "@/lib/storage";
 import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString } from "@/lib/pricing";
-import type { Article } from "@/lib/types";
+import type { Article, Category } from "@/lib/types";
 import { ShopLogo } from "@/app/components/ShopLogo";
 
 export default function CustomerArticlePage({
@@ -16,21 +16,26 @@ export default function CustomerArticlePage({
   const { id } = use(params);
   const router = useRouter();
   const [article, setArticle] = useState<Article | undefined>();
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
   
   const today = toDateString(new Date());
 
   useEffect(() => {
-    async function loadArticle() {
-      const data = await getArticleById(id);
-      if (!data) {
+    async function loadData() {
+      const [articleData, categoriesData] = await Promise.all([
+        getArticleById(id),
+        getAllCategories()
+      ]);
+      if (!articleData) {
         router.replace("/");
       } else {
-        setArticle(data);
+        setArticle(articleData);
+        setCategories(categoriesData);
       }
       setLoading(false);
     }
-    loadArticle();
+    loadData();
   }, [id, router]);
 
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-white">Loading...</div>;
@@ -133,7 +138,7 @@ export default function CustomerArticlePage({
               
               <div className="mb-4">
                 <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-400 mb-2 block">
-                  {article.category || "Premium Article"}
+                  {categories.find(c => c.id === article.category)?.name || "Premium Article"}
                 </span>
                 <h1 className="text-4xl sm:text-5xl font-extrabold text-white tracking-tight leading-[1.1]">
                   {article.name}

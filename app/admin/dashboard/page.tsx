@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as XLSX from "xlsx";
 import { useAuth } from "@/app/providers";
-import { getAllArticles, getAllCategories } from "@/lib/storage";
-import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString } from "@/lib/pricing";
+import { getAllArticles, getAllCategories, deleteArticle } from "@/lib/storage";
+import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, getBasePriceOnDate } from "@/lib/pricing";
 import type { Article, Category } from "@/lib/types";
 import { DateSelector } from "@/app/components/DateSelector";
 import { StatusBadge } from "@/app/components/Badge";
@@ -22,37 +22,76 @@ export default function AdminDashboard() {
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [date, setDate] = useState("");
+  const [selectedArticleIds, setSelectedArticleIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
   const today = toDateString(new Date());
 
   useEffect(() => {
     if (!loading && !user) router.replace("/admin");
   }, [loading, user, router]);
 
+  async function loadData() {
+    const [articlesData, categoriesData] = await Promise.all([
+      getAllArticles(),
+      getAllCategories()
+    ]);
+    setArticles(articlesData);
+    setCategories(categoriesData);
+  }
+
   useEffect(() => {
-    async function loadData() {
-      const [articlesData, categoriesData] = await Promise.all([
-        getAllArticles(),
-        getAllCategories()
-      ]);
-      setArticles(articlesData);
-      setCategories(categoriesData);
-    }
     setDate(today);
     loadData();
   }, [today]);
 
   if (loading || !user) return null;
 
+  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
+    return cats
+      .filter(c => c.parentId === parentId)
+      .map(c => ({
+        ...c,
+        level: 0,
+        children: buildTree(cats, c.id)
+      }));
+  };
+
+  const flattenTree = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      result = result.concat(flattenTree(node.children, level + 1));
+    }
+    return result;
+  };
+
+  const getCategoryAndDescendants = (cats: Category[], targetId: string): string[] => {
+    if (targetId === "All") return [];
+    const targetCat = cats.find(c => c.id === targetId);
+    if (!targetCat) return [targetId];
+
+    let result = [targetCat.id];
+    const children = cats.filter(c => c.parentId === targetCat.id);
+    for (const child of children) {
+      result = result.concat(getCategoryAndDescendants(cats, child.id));
+    }
+    return result;
+  };
+
+  const flattenedCategories = flattenTree(buildTree(categories));
+  const validCategoryIds = getCategoryAndDescendants(categories, selectedCategory);
+
   const filteredArticles = articles.filter(article => {
     const searchLower = searchQuery.toLowerCase();
     
     // Category Filter
-    if (selectedCategory !== "All" && article.category !== selectedCategory) return false;
+    if (selectedCategory !== "All" && (!article.category || !validCategoryIds.includes(article.category))) return false;
     
     // Search Query Filter
+    const categoryName = categories.find(c => c.id === article.category)?.name || "Uncategorized";
     return (
       article.name.toLowerCase().includes(searchLower) || 
-      (article.category && article.category.toLowerCase().includes(searchLower)) ||
+      categoryName.toLowerCase().includes(searchLower) ||
       (article.slogan && article.slogan.toLowerCase().includes(searchLower))
     );
   });
@@ -80,7 +119,7 @@ export default function AdminDashboard() {
       return {
         "ID": article.id,
         "Name": article.name,
-        "Category": article.category || "Uncategorized",
+        "Category": categories.find(c => c.id === article.category)?.name || "Uncategorized",
         "Slogan": article.slogan || "",
         "Stock": article.stock ?? 0,
         "Net Price": article.netPrice,
@@ -100,6 +139,40 @@ export default function AdminDashboard() {
 
     // Generate Excel file and trigger download
     XLSX.writeFile(workbook, `premia_prices_${date}.xlsx`);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedArticleIds.size === filteredArticles.length && filteredArticles.length > 0) {
+      setSelectedArticleIds(new Set());
+    } else {
+      setSelectedArticleIds(new Set(filteredArticles.map(a => a.id)));
+    }
+  };
+
+  const toggleArticleSelection = (id: string) => {
+    const newSet = new Set(selectedArticleIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setSelectedArticleIds(newSet);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedArticleIds.size === 0) return;
+    if (!confirm(`Are you sure you want to permanently delete ${selectedArticleIds.size} selected article(s)?`)) return;
+
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedArticleIds).map(id => deleteArticle(id)));
+      setSelectedArticleIds(new Set());
+      await loadData();
+    } catch (err: any) {
+      alert("Failed to delete articles: " + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   return (
@@ -167,24 +240,39 @@ export default function AdminDashboard() {
           </div>
           {/* Actions */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={exportToExcel}
-              className="inline-flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-              Export Excel
-            </button>
-            <Link
-              href="/admin/articles/new"
-              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:-translate-y-0.5 transition-all duration-300 shrink-0"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              New Article
-            </Link>
+            {selectedArticleIds.size > 0 ? (
+              <button
+                onClick={handleBulkDelete}
+                disabled={isDeleting}
+                className="inline-flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
+                </svg>
+                {isDeleting ? "Deleting..." : `Delete Selected (${selectedArticleIds.size})`}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={exportToExcel}
+                  className="inline-flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  Export Excel
+                </button>
+                <Link
+                  href="/admin/articles/new"
+                  className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:-translate-y-0.5 transition-all duration-300 shrink-0"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                  </svg>
+                  New Article
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -214,8 +302,10 @@ export default function AdminDashboard() {
                   className="w-full appearance-none bg-white/5 border border-white/10 text-white text-sm font-medium pl-3 pr-8 py-2.5 rounded-xl focus:outline-none focus:border-blue-500/50 transition-all cursor-pointer"
                 >
                   <option value="All" className="bg-zinc-900">All Categories</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                  {flattenedCategories.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-zinc-900">
+                      {"\u00A0\u00A0".repeat(c.level)}{c.name}
+                    </option>
                   ))}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">
@@ -291,7 +381,16 @@ export default function AdminDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/5 bg-black/20">
-                    <th className="px-6 py-4 text-left text-[10px] font-bold tracking-widest uppercase text-gray-500">Article</th>
+                    <th className="px-6 py-4 text-left">
+                      <button
+                        onClick={toggleSelectAll}
+                        className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
+                        style={selectedArticleIds.size === filteredArticles.length && filteredArticles.length > 0 ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
+                      >
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      </button>
+                    </th>
+                    <th className="px-4 py-4 text-left text-[10px] font-bold tracking-widest uppercase text-gray-500">Article</th>
                     <th className="px-4 py-4 text-center text-[10px] font-bold tracking-widest uppercase text-gray-500">Stock</th>
                     <th className="px-4 py-4 text-right text-[10px] font-bold tracking-widest uppercase text-gray-500">Net</th>
                     <th className="px-4 py-4 text-right text-[10px] font-bold tracking-widest uppercase text-gray-500">Sales</th>
@@ -304,7 +403,14 @@ export default function AdminDashboard() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {filteredArticles.map((article) => (
-                    <ArticleRow key={article.id} article={article} date={date} />
+                    <ArticleRow 
+                      key={article.id} 
+                      article={article} 
+                      date={date} 
+                      isSelected={selectedArticleIds.has(article.id)}
+                      onToggle={() => toggleArticleSelection(article.id)}
+                      categories={categories}
+                    />
                   ))}
                 </tbody>
               </table>
@@ -327,12 +433,16 @@ export default function AdminDashboard() {
 
 // ─── Article row ───────────────────────────────────────────────────────────────
 
-function ArticleRow({ article, date }: { article: Article; date: string }) {
+function ArticleRow({ article, date, isSelected, onToggle, categories }: { article: Article; date: string; isSelected: boolean; onToggle: () => void; categories: Category[] }) {
   const activeDiscount = getActiveDiscount(article, date);
   const price = getEffectivePrice(article, date);
   const grossPrice = applyVat(price, article.vatRatio);
+  
+  // Get the base prices that were applicable on the selected date
+  const { salesPrice: baseSalesPrice, netPrice: baseNetPrice } = getBasePriceOnDate(article, date);
+  
   const isCapped =
-    activeDiscount !== undefined && activeDiscount.discountedPrice < article.netPrice;
+    activeDiscount !== undefined && activeDiscount.discountedPrice < baseNetPrice;
 
   const status: ArticleStatus = activeDiscount
     ? "active"
@@ -340,10 +450,21 @@ function ArticleRow({ article, date }: { article: Article; date: string }) {
     ? "scheduled"
     : "none";
 
+  const categoryName = categories.find(c => c.id === article.category)?.name || "Uncategorized";
+
   return (
-    <tr className="hover:bg-white/[0.03] transition-colors duration-150">
-      {/* Article */}
+    <tr className={`hover:bg-white/[0.03] transition-colors duration-150 ${isSelected ? 'bg-blue-500/5' : ''}`}>
       <td className="px-6 py-4">
+        <button
+          onClick={onToggle}
+          className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
+          style={isSelected ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+        </button>
+      </td>
+      {/* Article */}
+      <td className="px-4 py-4">
         <div className="flex items-center gap-4">
           {article.imageUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
@@ -363,7 +484,7 @@ function ArticleRow({ article, date }: { article: Article; date: string }) {
             <p className="font-bold text-white leading-snug tracking-tight">{article.name}</p>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[10px] font-bold uppercase tracking-widest text-blue-400 bg-blue-500/10 px-1.5 py-0.5 rounded">
-                {article.category || "Uncategorized"}
+                {categoryName}
               </span>
               {article.slogan && (
                 <span className="text-[13px] text-gray-400 leading-snug truncate max-w-[200px]">{article.slogan}</span>
@@ -378,10 +499,10 @@ function ArticleRow({ article, date }: { article: Article; date: string }) {
         </span>
       </td>
       <td className="px-4 py-4 text-right">
-        <span className="tabular-nums text-gray-400 text-sm font-medium">{formatCurrency(article.netPrice)}</span>
+        <span className="tabular-nums text-gray-400 text-sm font-medium">{formatCurrency(baseNetPrice)}</span>
       </td>
       <td className="px-4 py-4 text-right">
-        <span className="tabular-nums text-gray-400 text-sm font-medium">{formatCurrency(article.salesPrice)}</span>
+        <span className="tabular-nums text-gray-400 text-sm font-medium">{formatCurrency(baseSalesPrice)}</span>
       </td>
       <td className="px-4 py-4 text-center">
         <span className="tabular-nums text-gray-500 text-sm font-medium">{article.vatRatio}%</span>

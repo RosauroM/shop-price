@@ -46,9 +46,44 @@ export default function BulkDiscountsPage() {
 
   if (loading || !user) return null;
 
+  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
+    return cats
+      .filter(c => c.parentId === parentId)
+      .map(c => ({
+        ...c,
+        level: 0,
+        children: buildTree(cats, c.id)
+      }));
+  };
+
+  const flattenTree = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      result = result.concat(flattenTree(node.children, level + 1));
+    }
+    return result;
+  };
+
+  const getCategoryAndDescendants = (cats: Category[], targetId: string): string[] => {
+    if (targetId === "All") return [];
+    const targetCat = cats.find(c => c.id === targetId);
+    if (!targetCat) return [targetId];
+
+    let result = [targetCat.id];
+    const children = cats.filter(c => c.parentId === targetCat.id);
+    for (const child of children) {
+      result = result.concat(getCategoryAndDescendants(cats, child.id));
+    }
+    return result;
+  };
+
+  const flattenedCategories = flattenTree(buildTree(categories));
+  const validCategoryIds = getCategoryAndDescendants(categories, selectedCategory);
+
   const filteredArticles = selectedCategory === "All" 
     ? articles 
-    : articles.filter(a => a.category === selectedCategory);
+    : articles.filter(a => validCategoryIds.includes(a.category));
 
   const toggleArticleSelection = (id: string) => {
     const newSet = new Set(selectedArticleIds);
@@ -246,8 +281,10 @@ export default function BulkDiscountsPage() {
                   className="w-full appearance-none bg-white/5 border border-white/10 text-white text-sm font-medium pl-3 pr-8 py-2 rounded-xl focus:outline-none focus:border-purple-500/50 transition-all cursor-pointer"
                 >
                   <option value="All" className="bg-zinc-900">All Categories</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                  {flattenedCategories.map((c) => (
+                    <option key={c.id} value={c.id} className="bg-zinc-900">
+                      {"\u00A0\u00A0".repeat(c.level)}{c.name}
+                    </option>
                   ))}
                 </select>
                 <div className="pointer-events-none absolute inset-y-0 right-3 flex items-center">

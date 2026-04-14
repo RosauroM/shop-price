@@ -66,6 +66,27 @@ export default function ManageArticlePage() {
     }
   }, [reload, user]);
 
+  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
+    return cats
+      .filter(c => c.parentId === parentId)
+      .map(c => ({
+        ...c,
+        level: 0,
+        children: buildTree(cats, c.id)
+      }));
+  };
+
+  const flattenTree = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      result = result.concat(flattenTree(node.children, level + 1));
+    }
+    return result;
+  };
+
+  const flattenedCategories = flattenTree(buildTree(categories));
+
   if (loading || !user) return null;
   if (!article) return <div className="p-8 text-white">Loading or Not Found...</div>;
 
@@ -128,10 +149,16 @@ export default function ManageArticlePage() {
   async function handleImageFile(file: File) {
     if (!file.type.startsWith("image/")) return;
     setImgProcessing(true);
-    const resized = await resizeImage(file);
-    await updateArticleImage(id, resized || null);
-    setImgProcessing(false);
-    reload();
+    try {
+      const resized = await resizeImage(file);
+      await updateArticleImage(id, resized || null);
+      reload();
+    } catch (error) {
+      console.error("Image processing failed:", error);
+      alert("Failed to process image. Please try again.");
+    } finally {
+      setImgProcessing(false);
+    }
   }
 
   async function handleAddDiscount(e: React.FormEvent<HTMLFormElement>) {
@@ -282,8 +309,10 @@ export default function ManageArticlePage() {
                         className="w-full bg-black/50 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50 appearance-none"
                       >
                         <option value="" disabled className="text-gray-500">Select...</option>
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.name} className="bg-zinc-900">{c.name}</option>
+                        {flattenedCategories.map((c) => (
+                          <option key={c.id} value={c.id} className="bg-zinc-900">
+                            {"\u00A0\u00A0".repeat(c.level)}{c.name}
+                          </option>
                         ))}
                       </select>
                     </div>

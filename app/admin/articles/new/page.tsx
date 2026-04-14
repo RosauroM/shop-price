@@ -38,13 +38,34 @@ export default function NewArticlePage() {
     if (user) loadCategories();
   }, [user]);
 
+  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
+    return cats
+      .filter(c => c.parentId === parentId)
+      .map(c => ({
+        ...c,
+        level: 0,
+        children: buildTree(cats, c.id)
+      }));
+  };
+
+  const flattenTree = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      result = result.concat(flattenTree(node.children, level + 1));
+    }
+    return result;
+  };
+
+  const flattenedCategories = flattenTree(buildTree(categories));
+
   if (loading || !user) return null;
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((p) => ({ ...p, [e.target.name]: e.target.value }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError("");
     const net = parseFloat(form.netPrice);
@@ -68,12 +89,13 @@ export default function NewArticlePage() {
         name: form.name.trim(),
         category: form.category.trim(),
         slogan: form.slogan.trim() || null,
-        imageUrl: imageUrl || null,
+        imageUrl,
         netPrice: net,
         salesPrice: sales,
         vatRatio: vat,
         stock: stockVal,
         discounts: [],
+        createdAt: new Date().toISOString(),
       });
       router.push("/admin/dashboard");
     } catch (err: any) {
@@ -198,9 +220,9 @@ export default function NewArticlePage() {
                         className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
                       >
                         <option value="" disabled className="text-gray-500">Select a category...</option>
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.name} className="bg-zinc-900 text-white">
-                            {c.name}
+                        {flattenedCategories.map((c) => (
+                          <option key={c.id} value={c.id} className="bg-zinc-900 text-white">
+                            {"\u00A0\u00A0".repeat(c.level)}{c.name}
                           </option>
                         ))}
                       </select>
@@ -335,9 +357,15 @@ function ImageUpload({ imageUrl, onChange }: { imageUrl: string; onChange: (url:
   async function handleFile(file: File) {
     if (!file.type.startsWith("image/")) return;
     setProcessing(true);
-    const resized = await resizeImage(file);
-    onChange(resized);
-    setProcessing(false);
+    try {
+      const resized = await resizeImage(file);
+      onChange(resized);
+    } catch (error) {
+      console.error("Image processing failed:", error);
+      alert("Failed to process image. Please try again.");
+    } finally {
+      setProcessing(false);
+    }
   }
 
   return (

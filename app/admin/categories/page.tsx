@@ -13,10 +13,18 @@ export default function CategoriesPage() {
   const { user, loading, signOut } = useAuth();
   const [categories, setCategories] = useState<Category[]>([]);
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryParentId, setNewCategoryParentId] = useState<string>("");
+  const [newCategoryCustomParent, setNewCategoryCustomParent] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [reparentingCategoryId, setReparentingCategoryId] = useState<string | null>(null);
+  const [newParentId, setNewParentId] = useState<string>("");
+  const [newParentCustomName, setNewParentCustomName] = useState("");
 
   useEffect(() => {
     if (!loading && !user) router.replace("/admin");
@@ -38,20 +46,57 @@ export default function CategoriesPage() {
     const name = newCategoryName.trim();
     if (!name) return setError("Category name is required.");
 
-    // Check if category already exists (case-insensitive)
-    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase())) {
-      return setError("This category already exists.");
-    }
+    let parentIdToUse = newCategoryParentId || null;
 
     setIsSubmitting(true);
+
+    // If "custom" parent is selected, create that parent first
+    if (newCategoryParentId === "custom") {
+      const customParentName = newCategoryCustomParent.trim();
+      if (!customParentName) {
+        setIsSubmitting(false);
+        return setError("Custom parent name is required.");
+      }
+
+      // Check if custom parent already exists at top level
+      const existingParent = categories.find(c => c.name.toLowerCase() === customParentName.toLowerCase() && c.parentId === null);
+      if (existingParent) {
+        parentIdToUse = existingParent.id;
+      } else {
+        // Create the new parent category
+        const newParentCat: Category = {
+          id: Date.now().toString(36) + Math.random().toString(36).substring(2),
+          name: customParentName,
+          parentId: null,
+        };
+        try {
+          await saveCategory(newParentCat);
+          // Manually push to state immediately so we can reference it, though we will setCategories fully below
+          categories.push(newParentCat);
+          parentIdToUse = newParentCat.id;
+        } catch (err: any) {
+          setIsSubmitting(false);
+          return setError("Failed to create custom parent category.");
+        }
+      }
+    }
+
+    if (categories.some((c) => c.name.toLowerCase() === name.toLowerCase() && c.parentId === parentIdToUse)) {
+      setIsSubmitting(false);
+      return setError("This category already exists under the selected parent.");
+    }
+
     try {
       const newCategory: Category = {
         id: Date.now().toString(36) + Math.random().toString(36).substring(2),
         name,
+        parentId: parentIdToUse,
       };
       await saveCategory(newCategory);
       setCategories([...categories, newCategory]);
       setNewCategoryName("");
+      setNewCategoryParentId("");
+      setNewCategoryCustomParent("");
     } catch (err: any) {
       setError(err.message || "Failed to add category.");
     } finally {
@@ -64,13 +109,15 @@ export default function CategoriesPage() {
     const name = editingCategoryName.trim();
     if (!name) return setError("Category name is required.");
 
-    // Check if category already exists (case-insensitive) and it's not the same one
-    if (categories.some((c) => c.id !== id && c.name.toLowerCase() === name.toLowerCase())) {
-      return setError("This category already exists.");
+    const originalCategory = categories.find(c => c.id === id);
+    if (!originalCategory) return setError("Category not found.");
+
+    if (categories.some((c) => c.id !== id && c.name.toLowerCase() === name.toLowerCase() && c.parentId === originalCategory.parentId)) {
+      return setError("This category already exists under the same parent.");
     }
 
     try {
-      const updatedCategory: Category = { id, name };
+      const updatedCategory: Category = { id, name, parentId: originalCategory.parentId };
       await saveCategory(updatedCategory);
       setCategories(categories.map((c) => (c.id === id ? updatedCategory : c)));
       setEditingCategoryId(null);
@@ -80,7 +127,76 @@ export default function CategoriesPage() {
     }
   };
 
+  const handleSetParent = async (id: string) => {
+    setError("");
+    const originalCategory = categories.find(c => c.id === id);
+    if (!originalCategory) return setError("Category not found.");
+
+    let parentIdToUse = newParentId || null;
+
+    if (newParentId === "custom") {
+      const customParentName = newParentCustomName.trim();
+      if (!customParentName) {
+        return setError("Custom parent name is required.");
+      }
+
+      const existingParent = categories.find(c => c.name.toLowerCase() === customParentName.toLowerCase() && c.parentId === null);
+      if (existingParent) {
+        parentIdToUse = existingParent.id;
+      } else {
+        const newParentCat: Category = {
+          id: Date.now().toString(36) + Math.random().toString(36).substring(2),
+          name: customParentName,
+          parentId: null,
+        };
+        try {
+          await saveCategory(newParentCat);
+          categories.push(newParentCat);
+          parentIdToUse = newParentCat.id;
+        } catch (err: any) {
+          return setError("Failed to create custom parent category.");
+        }
+      }
+    }
+
+    if (id === parentIdToUse) {
+      return setError("A category cannot be its own parent.");
+    }
+
+    // Basic cycle detection (prevent parent becoming child of its own child)
+    let currentParent = parentIdToUse;
+    while (currentParent) {
+      if (currentParent === id) {
+         return setError("Cannot set a child category as a parent.");
+      }
+      const parentCat = categories.find(c => c.id === currentParent);
+      currentParent = parentCat?.parentId || "";
+    }
+
+    if (categories.some((c) => c.id !== id && c.name.toLowerCase() === originalCategory.name.toLowerCase() && c.parentId === parentIdToUse)) {
+      return setError("This category already exists under the selected parent.");
+    }
+
+    try {
+      const updatedCategory: Category = { ...originalCategory, parentId: parentIdToUse };
+      await saveCategory(updatedCategory);
+      setCategories(categories.map((c) => (c.id === id ? updatedCategory : c)));
+      setReparentingCategoryId(null);
+      setNewParentId("");
+      setNewParentCustomName("");
+    } catch (err: any) {
+      setError(err.message || "Failed to change parent.");
+    }
+  };
+
   const handleDeleteCategory = async (id: string) => {
+    // Check if it has children
+    const hasChildren = categories.some(c => c.parentId === id);
+    if (hasChildren) {
+      alert("Cannot delete this category because it has sub-categories. Please delete or reassign them first.");
+      return;
+    }
+
     if (!confirm("Are you sure you want to delete this category?")) return;
     try {
       await deleteCategory(id);
@@ -90,16 +206,120 @@ export default function CategoriesPage() {
     }
   };
 
+  // Helper to build a tree
+  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
+    return cats
+      .filter(c => c.parentId === parentId)
+      .map(c => ({
+        ...c,
+        level: 0,
+        children: buildTree(cats, c.id)
+      }));
+  };
+
+  const flattenTree = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      result = result.concat(flattenTree(node.children, level + 1));
+    }
+    return result;
+  };
+
+  const flattenTreeForView = (tree: any[], level = 0): any[] => {
+    let result: any[] = [];
+    for (const node of tree) {
+      result.push({ ...node, level });
+      if (!collapsedCategoryIds.has(node.id)) {
+        result = result.concat(flattenTreeForView(node.children, level + 1));
+      }
+    }
+    return result;
+  };
+
+  const categoryTree = buildTree(categories);
+  const flattenedCategories = flattenTree(categoryTree);
+  const displayCategories = flattenTreeForView(categoryTree);
+
+  const toggleCollapse = (id: string) => {
+    const newSet = new Set(collapsedCategoryIds);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setCollapsedCategoryIds(newSet);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedCategoryIds.size === flattenedCategories.length && flattenedCategories.length > 0) {
+      setSelectedCategoryIds(new Set());
+    } else {
+      setSelectedCategoryIds(new Set(flattenedCategories.map(c => c.id)));
+    }
+  };
+
+  const getDescendantIds = (cats: Category[], parentId: string): string[] => {
+    let ids: string[] = [];
+    const children = cats.filter(c => c.parentId === parentId);
+    for (const child of children) {
+      ids.push(child.id);
+      ids = ids.concat(getDescendantIds(cats, child.id));
+    }
+    return ids;
+  };
+
+  const toggleCategorySelection = (id: string) => {
+    const newSet = new Set(selectedCategoryIds);
+    const isSelected = newSet.has(id);
+    const descendantIds = getDescendantIds(categories, id);
+
+    if (isSelected) {
+      newSet.delete(id);
+      descendantIds.forEach(descId => newSet.delete(descId));
+    } else {
+      newSet.add(id);
+      descendantIds.forEach(descId => newSet.add(descId));
+    }
+    setSelectedCategoryIds(newSet);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedCategoryIds.size === 0) return;
+
+    // Check if any selected category has children that are NOT also being deleted
+    const hasProtectedChildren = Array.from(selectedCategoryIds).some(id => {
+      return categories.some(c => c.parentId === id && !selectedCategoryIds.has(c.id));
+    });
+
+    if (hasProtectedChildren) {
+      alert("Some selected categories have sub-categories that are not selected for deletion. Please delete or reassign them first.");
+      return;
+    }
+
+    if (!confirm(`Are you sure you want to permanently delete ${selectedCategoryIds.size} selected categor(ies)?`)) return;
+
+    setIsDeleting(true);
+    try {
+      await Promise.all(Array.from(selectedCategoryIds).map(id => deleteCategory(id)));
+      setSelectedCategoryIds(new Set());
+      const data = await getAllCategories();
+      setCategories(data);
+    } catch (err: any) {
+      alert("Failed to delete categories: " + err.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Ambient Background */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] mix-blend-screen" />
         <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-600/10 rounded-full blur-[120px] mix-blend-screen" />
       </div>
 
       <div className="relative z-10 flex-1 flex flex-col max-w-5xl mx-auto w-full p-6 sm:p-10">
-        {/* Header */}
         <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-12 bg-white/5 border border-white/10 p-6 rounded-3xl backdrop-blur-md">
           <div className="flex items-center gap-4">
             <Link href="/admin/dashboard" className="hover:opacity-80 transition-opacity">
@@ -127,7 +347,6 @@ export default function CategoriesPage() {
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-          {/* Left Column: Add New Category Form */}
           <div className="md:col-span-1">
             <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl p-6 shadow-xl sticky top-6">
               <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-400 mb-6">
@@ -136,14 +355,46 @@ export default function CategoriesPage() {
 
               {error && (
                 <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-sm font-medium flex items-start gap-3">
-                  <svg className="w-5 h-5 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
                   {error}
                 </div>
               )}
 
               <form onSubmit={handleAddCategory} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
+                    Parent Category
+                  </label>
+                  <select
+                    value={newCategoryParentId}
+                    onChange={(e) => setNewCategoryParentId(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all appearance-none"
+                  >
+                    <option value="" className="bg-zinc-900 text-white">None (Top Level)</option>
+                    <option value="custom" className="bg-zinc-900 text-purple-400 font-bold">+ Create New Parent...</option>
+                    {flattenedCategories.map(cat => (
+                      <option key={cat.id} value={cat.id} className="bg-zinc-900 text-white">
+                        {"\u00A0\u00A0".repeat(cat.level)}{cat.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                {newCategoryParentId === "custom" && (
+                  <div className="animate-in fade-in slide-in-from-top-2 duration-200">
+                    <label className="block text-[10px] font-bold uppercase tracking-widest text-purple-400 mb-2">
+                      New Parent Name
+                    </label>
+                    <input
+                      type="text"
+                      value={newCategoryCustomParent}
+                      onChange={(e) => setNewCategoryCustomParent(e.target.value)}
+                      placeholder="e.g. Computers"
+                      required
+                      className="w-full bg-purple-500/5 border border-purple-500/20 text-white text-sm font-medium px-4 py-3 rounded-xl focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-all placeholder:text-gray-600"
+                    />
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-bold uppercase tracking-widest text-gray-400 mb-2">
                     Category Name
@@ -168,53 +419,130 @@ export default function CategoriesPage() {
             </div>
           </div>
 
-          {/* Right Column: Categories List */}
           <div className="md:col-span-2">
             <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-xl">
-              <div className="p-6 border-b border-white/5 bg-black/20">
-                <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-gray-400">
-                  Existing Categories ({categories.length})
-                </h2>
+              <div className="p-6 border-b border-white/5 bg-black/20 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={toggleSelectAll}
+                    className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
+                    style={selectedCategoryIds.size === flattenedCategories.length && flattenedCategories.length > 0 ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
+                  >
+                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                  </button>
+                  <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-gray-400">
+                    Existing Categories ({categories.length})
+                  </h2>
+                </div>
+                {selectedCategoryIds.size > 0 && (
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={isDeleting}
+                    className="text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 transition-colors px-3 py-1.5 rounded-lg disabled:opacity-50"
+                  >
+                    {isDeleting ? "Deleting..." : `Delete Selected (${selectedCategoryIds.size})`}
+                  </button>
+                )}
               </div>
               
               {categories.length === 0 ? (
                 <div className="p-12 text-center text-gray-500 flex flex-col items-center">
-                  <svg className="w-12 h-12 mb-4 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                  </svg>
                   <p className="font-medium text-lg text-gray-300">No categories yet</p>
                   <p className="text-sm mt-1">Use the form to create your first category.</p>
                 </div>
               ) : (
                 <ul className="divide-y divide-white/5">
-                  {categories.map((category) => (
-                    <li key={category.id} className="flex items-center justify-between p-5 hover:bg-white/5 transition-colors">
-                      {editingCategoryId === category.id ? (
-                        <div className="flex-1 flex items-center gap-3">
-                          <input
-                            type="text"
-                            value={editingCategoryName}
-                            onChange={(e) => setEditingCategoryName(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleEditCategory(category.id);
-                              if (e.key === "Escape") setEditingCategoryId(null);
-                            }}
-                            autoFocus
-                            className="bg-white/5 border border-white/10 text-white text-sm font-medium px-3 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-gray-600 w-full max-w-sm"
-                          />
+                  {displayCategories.map((category) => (
+                    <li key={category.id} className={`flex items-center justify-between p-5 transition-colors ${selectedCategoryIds.has(category.id) ? 'bg-blue-500/5 hover:bg-blue-500/10' : 'hover:bg-white/5'}`}>
+                      <div className="flex items-center gap-3 flex-1">
+                        <button
+                          onClick={() => toggleCategorySelection(category.id)}
+                          className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent shrink-0"
+                          style={selectedCategoryIds.has(category.id) ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
+                        >
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                        </button>
+
+                        <div className="flex-1 flex items-center gap-2" style={{ paddingLeft: `${category.level * 24}px` }}>
+                          {editingCategoryId === category.id ? (
+                            <div className="flex gap-2 flex-1">
+                              <input
+                                type="text"
+                                value={editingCategoryName}
+                                onChange={(e) => setEditingCategoryName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleEditCategory(category.id);
+                                  if (e.key === "Escape") setEditingCategoryId(null);
+                                }}
+                                autoFocus
+                                className="flex-1 bg-white/5 border border-white/10 text-white text-sm font-medium px-3 py-2 rounded-lg focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/20 transition-all placeholder:text-gray-600"
+                              />
+                            </div>
+                          ) : reparentingCategoryId === category.id ? (
+                            <div className="flex gap-2 flex-1 items-center">
+                              <div className="flex flex-col gap-1 w-full max-w-[200px]">
+                                <select
+                                  value={newParentId}
+                                  onChange={(e) => setNewParentId(e.target.value)}
+                                  className="w-full bg-white/5 border border-white/10 text-white text-sm font-medium px-3 py-2 rounded-lg focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-all appearance-none"
+                                >
+                                  <option value="" className="bg-zinc-900 text-white">None (Top Level)</option>
+                                  <option value="custom" className="bg-zinc-900 text-purple-400 font-bold">+ Create New Parent...</option>
+                                  {flattenedCategories
+                                    .filter(c => c.id !== category.id)
+                                    .map(cat => (
+                                    <option key={cat.id} value={cat.id} className="bg-zinc-900 text-white">
+                                      {"\u00A0\u00A0".repeat(cat.level)}{cat.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {newParentId === "custom" && (
+                                  <input
+                                    type="text"
+                                    value={newParentCustomName}
+                                    onChange={(e) => setNewParentCustomName(e.target.value)}
+                                    placeholder="New parent name..."
+                                    className="w-full bg-purple-500/5 border border-purple-500/20 text-white text-xs font-medium px-3 py-1.5 rounded-lg focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/20 transition-all placeholder:text-gray-600 animate-in fade-in slide-in-from-top-1"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") handleSetParent(category.id);
+                                      if (e.key === "Escape") setReparentingCategoryId(null);
+                                    }}
+                                  />
+                                )}
+                              </div>
+                              <span className="font-bold text-white shrink-0">{category.name}</span>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              {category.level > 0 && (
+                                <div className="w-4 h-4 border-b-2 border-l-2 border-white/10 rounded-bl-lg -mt-4 mr-1 shrink-0"></div>
+                              )}
+                              {category.children && category.children.length > 0 ? (
+                                <button
+                                  onClick={() => toggleCollapse(category.id)}
+                                  className="w-4 h-4 flex items-center justify-center bg-white/10 hover:bg-white/20 rounded text-gray-400 hover:text-white transition-colors"
+                                >
+                                  {collapsedCategoryIds.has(category.id) ? (
+                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12h-15" />
+                                    </svg>
+                                  )}
+                                </button>
+                              ) : (
+                                <div className="w-4 h-4" />
+                              )}
+                              <span className="font-bold text-white">{category.name}</span>
+                            </div>
+                          )}
                         </div>
-                      ) : (
-                        <div className="flex items-center gap-3">
-                          <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-400">
-                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
-                            </svg>
-                          </div>
-                          <span className="font-bold text-white">{category.name}</span>
-                        </div>
-                      )}
+                      </div>
                       
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 ml-4">
                         {editingCategoryId === category.id ? (
                           <>
                             <button
@@ -230,8 +558,32 @@ export default function CategoriesPage() {
                               Cancel
                             </button>
                           </>
+                        ) : reparentingCategoryId === category.id ? (
+                          <>
+                            <button
+                              onClick={() => handleSetParent(category.id)}
+                              className="text-[10px] font-bold uppercase tracking-widest text-emerald-400 hover:text-emerald-300 transition-colors px-3 py-2 rounded-lg hover:bg-emerald-500/10"
+                            >
+                              Save Parent
+                            </button>
+                            <button
+                              onClick={() => setReparentingCategoryId(null)}
+                              className="text-[10px] font-bold uppercase tracking-widest text-gray-400 hover:text-gray-300 transition-colors px-3 py-2 rounded-lg hover:bg-white/5"
+                            >
+                              Cancel
+                            </button>
+                          </>
                         ) : (
                           <>
+                            <button
+                              onClick={() => {
+                                setReparentingCategoryId(category.id);
+                                setNewParentId(category.parentId || "");
+                              }}
+                              className="text-[10px] font-bold uppercase tracking-widest text-purple-400 hover:text-purple-300 transition-colors px-3 py-2 rounded-lg hover:bg-purple-500/10"
+                            >
+                              Set Parent
+                            </button>
                             <button
                               onClick={() => {
                                 setEditingCategoryId(category.id);
