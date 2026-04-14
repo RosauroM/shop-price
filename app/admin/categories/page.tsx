@@ -4,9 +4,10 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { getAllCategories, saveCategory, deleteCategory } from "@/lib/storage";
+import { useCategoryData } from "@/hooks/useCategoryData";
 import { useAuth } from "@/app/providers";
-import { ShopLogo } from "@/app/components/ShopLogo";
-import type { Category } from "@/lib/types";
+import { ShopLogo } from "@/components/ShopLogo";
+import type { Category, CategoryNode } from "@/lib/types";
 
 export default function CategoriesPage() {
   const router = useRouter();
@@ -19,7 +20,6 @@ export default function CategoriesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState("");
-  const [selectedCategoryIds, setSelectedCategoryIds] = useState<Set<string>>(new Set());
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
   const [reparentingCategoryId, setReparentingCategoryId] = useState<string | null>(null);
@@ -37,6 +37,10 @@ export default function CategoriesPage() {
     }
     if (user) loadCategories();
   }, [user]);
+
+
+
+  const { categoryTree, flattenedCategories } = useCategoryData({ categories });
 
   if (loading || !user) return null;
 
@@ -206,39 +210,17 @@ export default function CategoriesPage() {
     }
   };
 
-  // Helper to build a tree
-  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
-    return cats
-      .filter(c => c.parentId === parentId)
-      .map(c => ({
-        ...c,
-        level: 0,
-        children: buildTree(cats, c.id)
-      }));
-  };
-
-  const flattenTree = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
+  const flattenTreeForView = (tree: CategoryNode[], level = 0): CategoryNode[] => {
+    let result: CategoryNode[] = [];
     for (const node of tree) {
       result.push({ ...node, level });
-      result = result.concat(flattenTree(node.children, level + 1));
-    }
-    return result;
-  };
-
-  const flattenTreeForView = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
-    for (const node of tree) {
-      result.push({ ...node, level });
-      if (!collapsedCategoryIds.has(node.id)) {
+      if (!collapsedCategoryIds.has(node.id) && node.children && node.children.length > 0) {
         result = result.concat(flattenTreeForView(node.children, level + 1));
       }
     }
     return result;
   };
 
-  const categoryTree = buildTree(categories);
-  const flattenedCategories = flattenTree(categoryTree);
   const displayCategories = flattenTreeForView(categoryTree);
 
   const toggleCollapse = (id: string) => {
@@ -251,13 +233,7 @@ export default function CategoriesPage() {
     setCollapsedCategoryIds(newSet);
   };
 
-  const toggleSelectAll = () => {
-    if (selectedCategoryIds.size === flattenedCategories.length && flattenedCategories.length > 0) {
-      setSelectedCategoryIds(new Set());
-    } else {
-      setSelectedCategoryIds(new Set(flattenedCategories.map(c => c.id)));
-    }
-  };
+
 
   const getDescendantIds = (cats: Category[], parentId: string): string[] => {
     let ids: string[] = [];
@@ -269,82 +245,13 @@ export default function CategoriesPage() {
     return ids;
   };
 
-  const toggleCategorySelection = (id: string) => {
-    const newSet = new Set(selectedCategoryIds);
-    const isSelected = newSet.has(id);
-    const descendantIds = getDescendantIds(categories, id);
-
-    if (isSelected) {
-      newSet.delete(id);
-      descendantIds.forEach(descId => newSet.delete(descId));
-    } else {
-      newSet.add(id);
-      descendantIds.forEach(descId => newSet.add(descId));
-    }
-    setSelectedCategoryIds(newSet);
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedCategoryIds.size === 0) return;
-
-    // Check if any selected category has children that are NOT also being deleted
-    const hasProtectedChildren = Array.from(selectedCategoryIds).some(id => {
-      return categories.some(c => c.parentId === id && !selectedCategoryIds.has(c.id));
-    });
-
-    if (hasProtectedChildren) {
-      alert("Some selected categories have sub-categories that are not selected for deletion. Please delete or reassign them first.");
-      return;
-    }
-
-    if (!confirm(`Are you sure you want to permanently delete ${selectedCategoryIds.size} selected categor(ies)?`)) return;
-
-    setIsDeleting(true);
-    try {
-      await Promise.all(Array.from(selectedCategoryIds).map(id => deleteCategory(id)));
-      setSelectedCategoryIds(new Set());
-      const data = await getAllCategories();
-      setCategories(data);
-    } catch (err: any) {
-      alert("Failed to delete categories: " + err.message);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] mix-blend-screen" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-emerald-600/10 rounded-full blur-[120px] mix-blend-screen" />
-      </div>
-
+    <>
       <div className="relative z-10 flex-1 flex flex-col max-w-5xl mx-auto w-full p-6 sm:p-10">
-        <header className="flex flex-col sm:flex-row sm:items-center justify-between gap-6 mb-12 bg-white/5 border border-white/10 p-6 rounded-3xl backdrop-blur-md">
-          <div className="flex items-center gap-4">
-            <Link href="/admin/dashboard" className="hover:opacity-80 transition-opacity">
-              <ShopLogo size="md" />
-            </Link>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">Categories</h1>
-              <p className="text-sm text-gray-400 font-medium">Manage product categories</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-5">
-            <Link
-              href="/admin/dashboard"
-              className="hidden sm:inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
-            >
-              Back to Dashboard
-            </Link>
-            <button
-              onClick={() => signOut()}
-              className="text-xs font-bold uppercase tracking-widest text-red-400 hover:text-red-300 transition-colors"
-            >
-              Sign Out
-            </button>
-          </div>
-        </header>
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold tracking-tight text-white leading-tight">Categories</h1>
+          <p className="text-sm text-gray-400 font-medium">Manage product categories</p>
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
           <div className="md:col-span-1">
@@ -423,26 +330,10 @@ export default function CategoriesPage() {
             <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-xl">
               <div className="p-6 border-b border-white/5 bg-black/20 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <button
-                    onClick={toggleSelectAll}
-                    className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
-                    style={selectedCategoryIds.size === flattenedCategories.length && flattenedCategories.length > 0 ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
-                  >
-                    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                  </button>
                   <h2 className="text-[11px] font-bold uppercase tracking-[0.2em] text-gray-400">
                     Existing Categories ({categories.length})
                   </h2>
                 </div>
-                {selectedCategoryIds.size > 0 && (
-                  <button
-                    onClick={handleBulkDelete}
-                    disabled={isDeleting}
-                    className="text-[10px] font-bold uppercase tracking-widest text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 transition-colors px-3 py-1.5 rounded-lg disabled:opacity-50"
-                  >
-                    {isDeleting ? "Deleting..." : `Delete Selected (${selectedCategoryIds.size})`}
-                  </button>
-                )}
               </div>
               
               {categories.length === 0 ? (
@@ -453,16 +344,8 @@ export default function CategoriesPage() {
               ) : (
                 <ul className="divide-y divide-white/5">
                   {displayCategories.map((category) => (
-                    <li key={category.id} className={`flex items-center justify-between p-5 transition-colors ${selectedCategoryIds.has(category.id) ? 'bg-blue-500/5 hover:bg-blue-500/10' : 'hover:bg-white/5'}`}>
+                    <li key={category.id} className={`flex items-center justify-between p-5 transition-colors hover:bg-white/5`}>
                       <div className="flex items-center gap-3 flex-1">
-                        <button
-                          onClick={() => toggleCategorySelection(category.id)}
-                          className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent shrink-0"
-                          style={selectedCategoryIds.has(category.id) ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
-                        >
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                        </button>
-
                         <div className="flex-1 flex items-center gap-2" style={{ paddingLeft: `${category.level * 24}px` }}>
                           {editingCategoryId === category.id ? (
                             <div className="flex gap-2 flex-1">
@@ -610,6 +493,6 @@ export default function CategoriesPage() {
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

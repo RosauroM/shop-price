@@ -4,11 +4,19 @@ export interface Category {
   parentId: string | null;
 }
 
+export interface CategoryNode extends Category {
+  level: number;
+  children: CategoryNode[];
+}
+
 export interface Discount {
   id: string;
+  articleId?: string;
+  categoryId?: string;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  discountedPrice: number;
+  discountedPrice?: number;
+  discountedPercent?: number;
 }
 
 export interface PriceHistoryEntry {

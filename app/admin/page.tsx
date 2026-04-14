@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/app/providers";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { ShopLogo } from "@/components/ShopLogo";
 import Link from "next/link";
 
 export default function AdminLogin() {
@@ -33,19 +33,7 @@ export default function AdminLogin() {
   }
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
+    <>
       {/* ── Header ── */}
       <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
         <div className="max-w-6xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between">
@@ -59,7 +47,7 @@ export default function AdminLogin() {
             </span>
           </div>
           <Link
-            href="/"
+            href="/storefront"
             className="text-xs font-medium tracking-wide text-gray-400 hover:text-white transition-colors"
           >
             ← Storefront
@@ -178,6 +166,6 @@ export default function AdminLogin() {
           </div>
         </div>
       </main>
-    </div>
+    </>
   );
 }

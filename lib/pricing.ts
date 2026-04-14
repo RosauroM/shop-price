@@ -25,7 +25,7 @@ export function getEffectivePrice(article: Article, date: string): number {
 
   const discount = getActiveDiscount(article, date);
   if (!discount) return baseSalesPrice;
-  return Math.max(discount.discountedPrice, baseNetPrice);
+  return Math.max(discount.discountedPrice ?? baseSalesPrice, baseNetPrice);
 }
 
 export function getBasePriceOnDate(article: Article, date: string): { salesPrice: number, netPrice: number } {
@@ -56,6 +56,14 @@ export function formatCurrency(amount: number): string {
 
 export function toDateString(date: Date): string {
   return date.toISOString().split("T")[0];
+}
+
+export function formatDateShort(dStr: string): string {
+  return new Date(dStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+export function formatDateLong(date: Date): string {
+  return date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 export function classifyDiscount(discount: Discount, currentDate: string): "active" | "scheduled" | "expired" {

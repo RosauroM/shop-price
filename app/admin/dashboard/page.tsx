@@ -1,234 +1,115 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import * as XLSX from "xlsx";
 import { useAuth } from "@/app/providers";
-import { getAllArticles, getAllCategories, deleteArticle } from "@/lib/storage";
-import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, getBasePriceOnDate } from "@/lib/pricing";
+import { getAllCategories, deleteArticle, getAllArticlesIdsByCategory } from "@/lib/storage";
+import { useArticlesPagination } from "@/hooks/useArticlesPagination";
+import { useCategoryData } from "@/hooks/useCategoryData";
+import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, getBasePriceOnDate, formatDateShort } from "@/lib/pricing";
+import { buildCategoryTree, flattenCategoryTree, getCategoryDescendants } from "@/lib/categoryUtils";
 import type { Article, Category } from "@/lib/types";
-import { DateSelector } from "@/app/components/DateSelector";
-import { StatusBadge } from "@/app/components/Badge";
-import type { ArticleStatus } from "@/app/components/Badge";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { DateSelector } from "@/components/DateSelector";
+import { StatusBadge } from "@/components/Badge";
+import type { ArticleStatus } from "@/components/Badge";
+import { ShopLogo } from "@/components/ShopLogo";
 import type { User } from "@/app/providers";
 
 export default function AdminDashboard() {
   const { user, loading, signOut } = useAuth();
   const router = useRouter();
-  const [articles, setArticles] = useState<Article[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
   const [date, setDate] = useState("");
   const [selectedArticleIds, setSelectedArticleIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [displayLimit, setDisplayLimit] = useState(20);
+  const [sentinelEl, setSentinelEl] = useState<HTMLTableRowElement | null>(null);
+  const sentinelRef = useCallback((node: HTMLTableRowElement | null) => setSentinelEl(node), []);
   const today = toDateString(new Date());
+
+  const {
+    articles,
+    hasMore,
+    isLoadingMore,
+    totalCount,
+    fetchInitialArticles,
+    loadMoreArticles
+  } = useArticlesPagination({
+    limit: 20,
+    categories,
+    selectedCategory,
+    searchQuery,
+    date
+  });
 
   useEffect(() => {
     if (!loading && !user) router.replace("/admin");
   }, [loading, user, router]);
 
-  async function loadData() {
-    const [articlesData, categoriesData] = await Promise.all([
-      getAllArticles(),
-      getAllCategories()
-    ]);
-    setArticles(articlesData);
-    setCategories(categoriesData);
-  }
+  const [dashboardStats, setDashboardStats] = useState({ active: 0, scheduled: 0, total: 0, avgNet: 0, avgSales: 0 });
+
+  const { flattenedCategories, validCategoryIds } = useCategoryData({ categories, selectedCategory });
+
+  const fetchDashboardData = useCallback(async () => {
+    // We let the hook fetch the actual articles
+    await fetchInitialArticles();
+    
+    // We still need to fetch stats for the dashboard header
+    const catIdsToFetch = selectedCategory === "All" ? null : validCategoryIds;
+    
+    import("@/lib/storage").then(({ getDashboardStats }) => {
+      getDashboardStats(date, catIdsToFetch).then(setDashboardStats);
+    });
+  }, [selectedCategory, validCategoryIds, date, fetchInitialArticles]);
+
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
 
   useEffect(() => {
     setDate(today);
-    loadData();
+    getAllCategories().then(cats => {
+      setCategories(cats);
+      setCategoriesLoaded(true);
+    });
   }, [today]);
+
+  useEffect(() => {
+    if (categoriesLoaded) {
+      fetchDashboardData();
+    }
+  }, [selectedCategory, categoriesLoaded, fetchDashboardData]);
+
+  useEffect(() => {
+    setDisplayLimit(20);
+  }, [searchQuery, selectedCategory, date]);
+
+  useEffect(() => {
+    if (!sentinelEl) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && !isLoadingMore && hasMore) {
+          loadMoreArticles();
+        }
+      },
+      { threshold: 0.1 }
+    );
+    observer.observe(sentinelEl);
+    return () => observer.disconnect();
+  }, [sentinelEl, isLoadingMore, hasMore, loadMoreArticles]);
 
   if (loading || !user) return null;
 
-  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
-    return cats
-      .filter(c => c.parentId === parentId)
-      .map(c => ({
-        ...c,
-        level: 0,
-        children: buildTree(cats, c.id)
-      }));
-  };
+  const displayedArticles = articles;
 
-  const flattenTree = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
-    for (const node of tree) {
-      result.push({ ...node, level });
-      result = result.concat(flattenTree(node.children, level + 1));
-    }
-    return result;
-  };
+  const activeCount = dashboardStats.active;
+  const scheduledCount = dashboardStats.scheduled;
 
-  const getCategoryAndDescendants = (cats: Category[], targetId: string): string[] => {
-    if (targetId === "All") return [];
-    const targetCat = cats.find(c => c.id === targetId);
-    if (!targetCat) return [targetId];
-
-    let result = [targetCat.id];
-    const children = cats.filter(c => c.parentId === targetCat.id);
-    for (const child of children) {
-      result = result.concat(getCategoryAndDescendants(cats, child.id));
-    }
-    return result;
-  };
-
-  const flattenedCategories = flattenTree(buildTree(categories));
-  const validCategoryIds = getCategoryAndDescendants(categories, selectedCategory);
-
-  const filteredArticles = articles.filter(article => {
-    const searchLower = searchQuery.toLowerCase();
-    
-    // Category Filter
-    if (selectedCategory !== "All" && (!article.category || !validCategoryIds.includes(article.category))) return false;
-    
-    // Search Query Filter
-    const categoryName = categories.find(c => c.id === article.category)?.name || "Uncategorized";
-    return (
-      article.name.toLowerCase().includes(searchLower) || 
-      categoryName.toLowerCase().includes(searchLower) ||
-      (article.slogan && article.slogan.toLowerCase().includes(searchLower))
-    );
-  });
-
-  const activeCount = filteredArticles.filter((a) => getActiveDiscount(a, date)).length;
-  const scheduledCount = filteredArticles.filter((a) => !getActiveDiscount(a, date) && a.discounts.some((d) => d.startDate > date)).length;
-
-  const fmtDate = (dStr: string) =>
-    new Date(dStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
-
-  const exportToExcel = () => {
-    // Format data for Excel
-    const data = filteredArticles.map(article => {
-      const price = getEffectivePrice(article, date);
-      const grossPrice = applyVat(price, article.vatRatio);
-      const activeDiscount = getActiveDiscount(article, date);
-      const isCapped = activeDiscount !== undefined && activeDiscount.discountedPrice < article.netPrice;
-      
-      const status = activeDiscount
-        ? "Active Discount"
-        : article.discounts.some((d) => d.startDate > date)
-        ? "Scheduled Discount"
-        : "No Discount";
-
-      return {
-        "ID": article.id,
-        "Name": article.name,
-        "Category": categories.find(c => c.id === article.category)?.name || "Uncategorized",
-        "Slogan": article.slogan || "",
-        "Stock": article.stock ?? 0,
-        "Net Price": article.netPrice,
-        "Base Sales Price": article.salesPrice,
-        "VAT Rate (%)": article.vatRatio,
-        "Status": status,
-        "Effective Price (Excl. VAT)": price,
-        "Effective Price (Incl. VAT)": grossPrice,
-        "Floor Applied": isCapped ? "Yes" : "No"
-      };
-    });
-
-    // Create a new workbook and add the data
-    const worksheet = XLSX.utils.json_to_sheet(data);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Prices");
-
-    // Generate Excel file and trigger download
-    XLSX.writeFile(workbook, `premia_prices_${date}.xlsx`);
-  };
-
-  const toggleSelectAll = () => {
-    if (selectedArticleIds.size === filteredArticles.length && filteredArticles.length > 0) {
-      setSelectedArticleIds(new Set());
-    } else {
-      setSelectedArticleIds(new Set(filteredArticles.map(a => a.id)));
-    }
-  };
-
-  const toggleArticleSelection = (id: string) => {
-    const newSet = new Set(selectedArticleIds);
-    if (newSet.has(id)) {
-      newSet.delete(id);
-    } else {
-      newSet.add(id);
-    }
-    setSelectedArticleIds(newSet);
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedArticleIds.size === 0) return;
-    if (!confirm(`Are you sure you want to permanently delete ${selectedArticleIds.size} selected article(s)?`)) return;
-
-    setIsDeleting(true);
-    try {
-      await Promise.all(Array.from(selectedArticleIds).map(id => deleteArticle(id)));
-      setSelectedArticleIds(new Set());
-      await loadData();
-    } catch (err: any) {
-      alert("Failed to delete articles: " + err.message);
-    } finally {
-      setIsDeleting(false);
-    }
-  };
+  const fmtDate = (dStr: string) => formatDateShort(dStr);
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="md" />
-            <span className="font-bold text-white text-lg tracking-tight uppercase">
-              Premia
-            </span>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 border border-white/10 px-2 py-0.5 rounded-sm">
-              Admin
-            </span>
-          </div>
-          <div className="flex items-center gap-5">
-            <Link
-              href="/admin/categories"
-              className="hidden sm:inline-flex items-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 text-blue-400 text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
-            >
-              Categories
-            </Link>
-            <Link
-              href="/admin/discounts"
-              className="hidden sm:inline-flex items-center gap-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 text-purple-400 text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
-            >
-              Bulk Discounts
-            </Link>
-            <Link
-              href="/"
-              className="hidden sm:inline-flex items-center gap-2 bg-white/5 hover:bg-white/10 border border-white/10 text-white text-xs font-bold px-4 py-2 rounded-full transition-all duration-200"
-            >
-              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
-              </svg>
-              View Storefront
-            </Link>
-            <div className="w-px h-6 bg-white/10 hidden sm:block" />
-            <AdminUserMenu user={user} onSignOut={signOut} />
-          </div>
-        </div>
-      </header>
-
+    <>
       {/* ── Sub-header: page title + New Article ── */}
       <div className="border-b border-white/5 bg-white/[0.02] relative z-10">
         <div className="max-w-6xl mx-auto px-6 sm:px-10 h-14 flex items-center justify-between gap-4">
@@ -238,30 +119,9 @@ export default function AdminDashboard() {
             <span className="text-gray-600">›</span>
             <span className="text-gray-300">Articles</span>
           </div>
-          {/* Actions */}
+            {/* Actions */}
           <div className="flex items-center gap-3">
-            {selectedArticleIds.size > 0 ? (
-              <button
-                onClick={handleBulkDelete}
-                disabled={isDeleting}
-                className="inline-flex items-center gap-2 bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-                </svg>
-                {isDeleting ? "Deleting..." : `Delete Selected (${selectedArticleIds.size})`}
-              </button>
-            ) : (
               <>
-                <button
-                  onClick={exportToExcel}
-                  className="inline-flex items-center gap-2 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full hover:-translate-y-0.5 transition-all duration-300 shrink-0"
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                  </svg>
-                  Export Excel
-                </button>
                 <Link
                   href="/admin/articles/new"
                   className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold uppercase tracking-wide px-5 py-2.5 rounded-full shadow-[0_0_15px_rgba(37,99,235,0.3)] hover:-translate-y-0.5 transition-all duration-300 shrink-0"
@@ -272,7 +132,6 @@ export default function AdminDashboard() {
                   New Article
                 </Link>
               </>
-            )}
           </div>
         </div>
       </div>
@@ -287,9 +146,9 @@ export default function AdminDashboard() {
                 <span className="text-[11px] font-bold uppercase tracking-[0.2em] text-blue-400">Articles</span>
               </div>
               <h1 className="font-extrabold text-3xl text-white tracking-tight">
-                {filteredArticles.length === 0
-                  ? "No articles yet"
-                  : `${filteredArticles.length} Article${filteredArticles.length !== 1 ? "s" : ""}`}
+                {dashboardStats?.total === 0
+                    ? "No articles yet"
+                    : `${dashboardStats?.total} Article${dashboardStats?.total !== 1 ? "s" : ""}`}
               </h1>
             </div>
             
@@ -334,16 +193,16 @@ export default function AdminDashboard() {
           </div>
 
           {/* Stats strip */}
-          {articles.length > 0 && (
+          {totalCount > 0 && (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-white/5 rounded-xl overflow-hidden border border-white/10">
               {[
-                { label: "Total", value: String(filteredArticles.length) },
+                { label: "Total", value: String(dashboardStats?.total) },
                 { label: "Active Discounts", value: String(activeCount), highlight: activeCount > 0 },
                 { label: "Scheduled", value: String(scheduledCount) },
                 {
                   label: "Avg. Sales Price",
-                  value: filteredArticles.length > 0
-                    ? formatCurrency(filteredArticles.reduce((s, a) => s + a.salesPrice, 0) / filteredArticles.length)
+                  value: dashboardStats?.total > 0
+                    ? formatCurrency(dashboardStats.avgSales)
                     : "—",
                 },
               ].map(({ label, value, highlight }) => (
@@ -361,9 +220,11 @@ export default function AdminDashboard() {
 
       {/* ── Content ── */}
       <main className="flex-1 w-full px-6 sm:px-10 py-8 relative z-10">
-        {articles.length === 0 ? (
+        {totalCount === 0 && !loading && (
           <AdminEmptyState />
-        ) : (
+        )}
+        
+        {totalCount > 0 && (
           <div className="bg-zinc-900/50 backdrop-blur-sm border border-white/10 rounded-2xl overflow-hidden shadow-xl">
             {/* Table label */}
             <div className="px-6 py-4 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
@@ -381,15 +242,6 @@ export default function AdminDashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-white/5 bg-black/20">
-                    <th className="px-6 py-4 text-left">
-                      <button
-                        onClick={toggleSelectAll}
-                        className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
-                        style={selectedArticleIds.size === filteredArticles.length && filteredArticles.length > 0 ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
-                      >
-                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                      </button>
-                    </th>
                     <th className="px-4 py-4 text-left text-[10px] font-bold tracking-widest uppercase text-gray-500">Article</th>
                     <th className="px-4 py-4 text-center text-[10px] font-bold tracking-widest uppercase text-gray-500">Stock</th>
                     <th className="px-4 py-4 text-right text-[10px] font-bold tracking-widest uppercase text-gray-500">Net</th>
@@ -402,38 +254,34 @@ export default function AdminDashboard() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredArticles.map((article) => (
+                  {displayedArticles.map((article, index) => (
                     <ArticleRow 
-                      key={article.id} 
+                      key={`${article.id}-${index}`} 
                       article={article} 
                       date={date} 
-                      isSelected={selectedArticleIds.has(article.id)}
-                      onToggle={() => toggleArticleSelection(article.id)}
                       categories={categories}
                     />
                   ))}
+                  {hasMore && (
+                    <tr ref={sentinelRef}>
+                      <td colSpan={9} className="px-6 py-6 text-center text-[11px] font-bold uppercase tracking-widest text-gray-500">
+                        {isLoadingMore ? "Loading more..." : "Scroll to load more"}
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
         )}
       </main>
-
-      <footer className="border-t border-white/5 mt-auto relative z-10 bg-black/40 backdrop-blur-xl">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 py-6 flex items-center justify-between">
-          <span className="text-[11px] text-gray-500 uppercase tracking-widest font-bold">Admin Dashboard</span>
-          <Link href="/" className="text-[11px] text-gray-500 hover:text-white uppercase tracking-widest transition-colors font-bold">
-            View Storefront ↗
-          </Link>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }
 
 // ─── Article row ───────────────────────────────────────────────────────────────
 
-function ArticleRow({ article, date, isSelected, onToggle, categories }: { article: Article; date: string; isSelected: boolean; onToggle: () => void; categories: Category[] }) {
+function ArticleRow({ article, date, categories }: { article: Article; date: string; categories: Category[] }) {
   const activeDiscount = getActiveDiscount(article, date);
   const price = getEffectivePrice(article, date);
   const grossPrice = applyVat(price, article.vatRatio);
@@ -442,7 +290,7 @@ function ArticleRow({ article, date, isSelected, onToggle, categories }: { artic
   const { salesPrice: baseSalesPrice, netPrice: baseNetPrice } = getBasePriceOnDate(article, date);
   
   const isCapped =
-    activeDiscount !== undefined && activeDiscount.discountedPrice < baseNetPrice;
+    activeDiscount !== undefined && (activeDiscount.discountedPrice ?? baseSalesPrice) < baseNetPrice;
 
   const status: ArticleStatus = activeDiscount
     ? "active"
@@ -453,16 +301,7 @@ function ArticleRow({ article, date, isSelected, onToggle, categories }: { artic
   const categoryName = categories.find(c => c.id === article.category)?.name || "Uncategorized";
 
   return (
-    <tr className={`hover:bg-white/[0.03] transition-colors duration-150 ${isSelected ? 'bg-blue-500/5' : ''}`}>
-      <td className="px-6 py-4">
-        <button
-          onClick={onToggle}
-          className="flex items-center justify-center w-4 h-4 rounded border transition-colors border-white/20 hover:border-white/50 bg-transparent text-transparent"
-          style={isSelected ? { backgroundColor: '#3b82f6', borderColor: '#3b82f6', color: 'white' } : {}}
-        >
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-        </button>
-      </td>
+    <tr className={`hover:bg-white/[0.03] transition-colors duration-150`}>
       {/* Article */}
       <td className="px-4 py-4">
         <div className="flex items-center gap-4">
@@ -530,32 +369,6 @@ function ArticleRow({ article, date, isSelected, onToggle, categories }: { artic
         </Link>
       </td>
     </tr>
-  );
-}
-
-// ─── Admin user menu ───────────────────────────────────────────────────────────
-
-function AdminUserMenu({ user, onSignOut }: { user: User; onSignOut: () => Promise<void> }) {
-  return (
-    <div className="flex items-center gap-3">
-      {user.photoURL ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={user.photoURL} alt={user.displayName ?? ""} className="w-8 h-8 rounded-full border border-white/10" />
-      ) : (
-        <div className="w-8 h-8 rounded-full bg-zinc-800 border border-white/10 flex items-center justify-center text-gray-400 text-xs font-bold select-none">
-          {(user.displayName?.[0] ?? user.email?.[0] ?? "?").toUpperCase()}
-        </div>
-      )}
-      <button
-        onClick={onSignOut}
-        className="hidden sm:inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-widest text-gray-500 hover:text-red-400 transition-colors"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
-        </svg>
-        Sign out
-      </button>
-    </div>
   );
 }
 

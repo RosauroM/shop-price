@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useAuth } from "@/app/providers";
 import { saveArticle, resizeImage, getAllCategories } from "@/lib/storage";
 import { applyVat, formatCurrency } from "@/lib/pricing";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { useCategoryData } from "@/hooks/useCategoryData";
+import { ShopLogo } from "@/components/ShopLogo";
 import type { Category } from "@/lib/types";
 
 export default function NewArticlePage() {
@@ -38,26 +39,7 @@ export default function NewArticlePage() {
     if (user) loadCategories();
   }, [user]);
 
-  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
-    return cats
-      .filter(c => c.parentId === parentId)
-      .map(c => ({
-        ...c,
-        level: 0,
-        children: buildTree(cats, c.id)
-      }));
-  };
-
-  const flattenTree = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
-    for (const node of tree) {
-      result.push({ ...node, level });
-      result = result.concat(flattenTree(node.children, level + 1));
-    }
-    return result;
-  };
-
-  const flattenedCategories = flattenTree(buildTree(categories));
+  const { flattenedCategories } = useCategoryData({ categories });
 
   if (loading || !user) return null;
 
@@ -119,37 +101,7 @@ export default function NewArticlePage() {
     : null;
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-5xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="md" />
-            <Link
-              href="/admin/dashboard"
-              className="font-bold text-white text-lg tracking-tight uppercase hover:text-gray-300 transition-colors"
-            >
-              PREMIA
-            </Link>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 border border-white/10 px-2 py-0.5 rounded-sm">
-              Admin
-            </span>
-          </div>
-        </div>
-      </header>
-
+    <>
       {/* ── Sub-header ── */}
       <div className="border-b border-white/5 bg-white/[0.02] relative z-10">
         <div className="max-w-5xl mx-auto px-6 sm:px-10 h-14 flex items-center gap-2.5 text-xs font-medium uppercase tracking-widest">
@@ -343,7 +295,7 @@ export default function NewArticlePage() {
           </div>
         </div>
       </main>
-    </div>
+    </>
   );
 }
 

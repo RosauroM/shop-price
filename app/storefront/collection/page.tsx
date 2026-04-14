@@ -1,18 +1,21 @@
 "use client";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { getAllArticles, getAllCategories } from "@/lib/storage";
+import { getAllCategories } from "@/lib/storage";
+import { useArticlesPagination } from "@/hooks/useArticlesPagination";
+import { useCategoryData } from "@/hooks/useCategoryData";
 import {
   getEffectivePrice,
   getActiveDiscount,
   applyVat,
   formatCurrency,
   toDateString,
+  formatDateLong,
 } from "@/lib/pricing";
+import { buildCategoryTree, flattenCategoryTree, getCategoryDescendants } from "@/lib/categoryUtils";
 import type { Article, Category } from "@/lib/types";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { ShopLogo } from "@/components/ShopLogo";
 
 export default function CollectionPage() {
-  const [articles, setArticles] = useState<Article[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState("");
@@ -20,23 +23,47 @@ export default function CollectionPage() {
   const [maxPrice, setMaxPrice] = useState("");
   const [discountOnly, setDiscountOnly] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
-  const [displayLimit, setDisplayLimit] = useState(6);
   const searchRef = useRef<HTMLInputElement>(null);
   const [sentinelEl, setSentinelEl] = useState<HTMLDivElement | null>(null);
   const sentinelRef = useCallback((node: HTMLDivElement | null) => setSentinelEl(node), []);
   const today = toDateString(new Date());
 
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
+
+  const {
+    articles,
+    hasMore,
+    isLoadingMore,
+    totalCount,
+    fetchInitialArticles,
+    loadMoreArticles
+  } = useArticlesPagination({
+    limit: 12,
+    categories,
+    selectedCategory,
+    searchQuery,
+    minPrice,
+    maxPrice,
+    discountOnly,
+    date: today
+  });
+
   useEffect(() => {
-    async function loadData() {
-      const [articlesData, categoriesData] = await Promise.all([
-        getAllArticles(),
-        getAllCategories()
-      ]);
-      setArticles(articlesData);
-      setCategories(categoriesData);
-    }
-    loadData();
+    getAllCategories().then(cats => {
+      setCategories(cats);
+      setCategoriesLoaded(true);
+    });
   }, []);
+
+  useEffect(() => {
+    if (categoriesLoaded) {
+      // Debounce the fetch to avoid spamming the backend while typing in search/price
+      const timeoutId = setTimeout(() => {
+        fetchInitialArticles();
+      }, 300);
+      return () => clearTimeout(timeoutId);
+    }
+  }, [selectedCategory, categoriesLoaded, fetchInitialArticles, searchQuery, minPrice, maxPrice, discountOnly]);
 
   useEffect(() => {
     if (searchOpen && searchRef.current) {
@@ -44,139 +71,32 @@ export default function CollectionPage() {
     }
   }, [searchOpen]);
 
-  // Reset display limit when filters change
-  useEffect(() => {
-    setDisplayLimit(6);
-  }, [searchQuery, selectedCategory, minPrice, maxPrice, discountOnly]);
+  const { flattenedCategories } = useCategoryData({ categories, selectedCategory });
 
-  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
-    return cats
-      .filter(c => c.parentId === parentId)
-      .map(c => ({
-        ...c,
-        level: 0,
-        children: buildTree(cats, c.id)
-      }));
-  };
+  const filteredArticles = articles;
 
-  const flattenTree = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
-    for (const node of tree) {
-      result.push({ ...node, level });
-      result = result.concat(flattenTree(node.children, level + 1));
-    }
-    return result;
-  };
-
-  const getCategoryAndDescendants = (cats: Category[], targetId: string): string[] => {
-    if (targetId === "All") return [];
-    const targetCat = cats.find(c => c.id === targetId);
-    if (!targetCat) return [targetId];
-
-    let result = [targetCat.id];
-    const children = cats.filter(c => c.parentId === targetCat.id);
-    for (const child of children) {
-      result = result.concat(getCategoryAndDescendants(cats, child.id));
-    }
-    return result;
-  };
-
-  const flattenedCategories = flattenTree(buildTree(categories));
-  const validCategoryIds = getCategoryAndDescendants(categories, selectedCategory);
-
-  const filteredArticles = articles.filter((a) => {
-    const categoryName = categories.find(c => c.id === a.category)?.name || "Uncategorized";
-    const matchesSearch = searchQuery
-      ? a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (a.slogan?.toLowerCase().includes(searchQuery.toLowerCase()) ?? false) ||
-        categoryName.toLowerCase().includes(searchQuery.toLowerCase())
-      : true;
-
-    const matchesCategory =
-      selectedCategory === "All" ? true : validCategoryIds.includes(a.category);
-
-    const price = getEffectivePrice(a, today);
-    const minP = parseFloat(minPrice);
-    const maxP = parseFloat(maxPrice);
-    const matchesMinPrice = !isNaN(minP) ? price >= minP : true;
-    const matchesMaxPrice = !isNaN(maxP) ? price <= maxP : true;
-
-    const hasDiscount = getActiveDiscount(a, today) !== undefined || (price < a.salesPrice);
-    const matchesDiscount = discountOnly ? hasDiscount : true;
-
-    return matchesSearch && matchesCategory && matchesMinPrice && matchesMaxPrice && matchesDiscount;
-  });
-
-  const displayedArticles = filteredArticles.slice(0, displayLimit);
+  const displayedArticles = filteredArticles;
 
   // Infinite scroll observer
   useEffect(() => {
     if (!sentinelEl) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0].isIntersecting) {
-          setDisplayLimit((prev) => prev + 6);
+        if (entries[0].isIntersecting && !isLoadingMore && hasMore) {
+          loadMoreArticles();
         }
       },
       { threshold: 0.1 }
     );
     observer.observe(sentinelEl);
     return () => observer.disconnect();
-  }, [sentinelEl]);
+  }, [sentinelEl, isLoadingMore, hasMore, loadMoreArticles]);
 
-  const dateLabel = new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+  const dateLabel = formatDateLong(new Date());
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between gap-6">
-
-          {/* Logo */}
-          <div className="flex items-center gap-3 shrink-0">
-            <ShopLogo size="md" />
-            <span className="font-bold text-white text-lg tracking-tight">
-              PREMIA
-            </span>
-          </div>
-
-          {/* Nav */}
-          <nav className="hidden md:flex items-center gap-10">
-            <a href="/" className="text-sm font-medium tracking-wide text-gray-400 hover:text-white transition-colors duration-200">
-              Home
-            </a>
-            <a href="/collection" className="text-sm font-medium tracking-wide text-white transition-colors duration-200">
-              Collections
-            </a>
-          </nav>
-
-          {/* Actions */}
-          <div className="flex items-center gap-4">
-            <a href="/admin" className="text-xs font-medium text-gray-400 hover:text-white transition-colors">Admin</a>
-            <button
-              onClick={() => setSearchOpen((v) => !v)}
-              className={`p-2 transition-colors duration-200 ${searchOpen ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
-              aria-label="Search"
-            >
-              <SearchIcon />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Search bar — outside header, conditionally rendered */}
+    <>
+      {/* Search bar — conditinally rendered at the top of the collection */}
       {searchOpen && (
         <div className="sticky top-16 z-20 bg-black/60 backdrop-blur-xl border-b border-white/5 animate-fade-in">
           <div className="max-w-6xl mx-auto px-6 sm:px-10 h-14 flex items-center gap-4">
@@ -211,7 +131,16 @@ export default function CollectionPage() {
       <main className="flex-1 relative z-10 pt-8 pb-16">
         <div className="max-w-7xl mx-auto px-6 sm:px-10 py-8">
           
-          <h1 className="text-3xl font-extrabold text-white tracking-tight mb-8">The Collection</h1>
+          <div className="flex items-center justify-between mb-8">
+            <h1 className="text-3xl font-extrabold text-white tracking-tight">The Collection</h1>
+            <button
+              onClick={() => setSearchOpen((v) => !v)}
+              className={`p-2 transition-colors duration-200 ${searchOpen ? "text-blue-400" : "text-gray-400 hover:text-white"}`}
+              aria-label="Search"
+            >
+              <SearchIcon />
+            </button>
+          </div>
 
           <div className="flex flex-col lg:flex-row gap-10">
             {/* Sidebar Filters */}
@@ -305,15 +234,15 @@ export default function CollectionPage() {
                 <div className="flex items-center gap-6 flex-1 min-w-0">
                   <span className="text-sm font-medium tracking-wide text-gray-400 shrink-0">
                     {searchQuery
-                      ? `${filteredArticles.length} result${filteredArticles.length !== 1 ? "s" : ""} for "${searchQuery}"`
+                      ? `${totalCount} result${totalCount !== 1 ? "s" : ""} for "${searchQuery}"`
                       : selectedCategory !== "All"
-                      ? `${filteredArticles.length} Article${filteredArticles.length !== 1 ? "s" : ""} in ${categories.find(c => c.id === selectedCategory)?.name || selectedCategory}`
+                      ? `${totalCount} Article${totalCount !== 1 ? "s" : ""} in ${categories.find(c => c.id === selectedCategory)?.name || selectedCategory}`
                       : "All Articles"}
                   </span>
                   <div className="flex-1 h-px bg-white/5" />
                   {!searchQuery && (
                     <span className="text-sm text-gray-500 tracking-wide shrink-0">
-                      {filteredArticles.length} {filteredArticles.length === 1 ? "piece" : "pieces"} · {dateLabel}
+                      {totalCount} {totalCount === 1 ? "piece" : "pieces"} · {dateLabel}
                     </span>
                   )}
                 </div>
@@ -341,12 +270,12 @@ export default function CollectionPage() {
                   </div>
                   
                   {/* Sentinel Element for Infinite Scroll */}
-                  {displayLimit < filteredArticles.length && (
+                  {hasMore && (
                     <div ref={sentinelRef} className="mt-12 mb-4 flex justify-center w-full">
                       <div className="flex items-center gap-3 px-6 py-3 rounded-full bg-white/5 border border-white/10">
                         <div className="w-4 h-4 border-2 border-white/20 border-t-blue-500 rounded-full animate-spin" />
                         <span className="text-xs font-bold uppercase tracking-widest text-gray-400">
-                          Loading more...
+                          {isLoadingMore ? "Loading more..." : "Scroll to load more"}
                         </span>
                       </div>
                     </div>
@@ -357,23 +286,7 @@ export default function CollectionPage() {
           </div>
         </div>
       </main>
-
-      {/* ── Footer ── */}
-      <footer className="border-t border-white/5 relative z-10 bg-black/40 backdrop-blur-xl mt-auto">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="sm" />
-            <div>
-              <p className="text-sm font-bold text-white tracking-tight">PREMIA</p>
-              <p className="text-xs text-gray-500 mt-0.5">Premium articles, transparent pricing.</p>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500">
-            &copy; {new Date().getFullYear()} Premia &nbsp;·&nbsp; All prices include VAT
-          </p>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }
 
@@ -403,7 +316,7 @@ function ProductCard({ article, today, categories }: { article: Article; today: 
   const categoryName = categories.find(c => c.id === article.category)?.name || "Uncategorized";
 
   return (
-    <div className="group bg-zinc-900/50 border border-white/10 hover:border-white/20 hover:shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:-translate-y-1 transition-all duration-500 flex flex-col relative overflow-hidden rounded-2xl backdrop-blur-sm cursor-pointer" onClick={() => window.location.href = `/articles/${article.id}`}>
+    <div className="group bg-zinc-900/50 border border-white/10 hover:border-white/20 hover:shadow-[0_8px_30px_rgba(0,0,0,0.5)] hover:-translate-y-1 transition-all duration-500 flex flex-col relative overflow-hidden rounded-2xl backdrop-blur-sm cursor-pointer" onClick={() => window.location.href = `/storefront/articles/${article.id}`}>
       {/* Image area */}
       <div className={`relative h-72 overflow-hidden ${article.imageUrl ? "" : `bg-gradient-to-br from-zinc-800 to-zinc-950`}`}>
         {article.imageUrl ? (

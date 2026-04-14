@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { getArticleById, getAllCategories } from "@/lib/storage";
 import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString } from "@/lib/pricing";
 import type { Article, Category } from "@/lib/types";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { ShopLogo } from "@/components/ShopLogo";
 
 export default function CustomerArticlePage({
   params,
@@ -50,36 +50,18 @@ export default function CustomerArticlePage({
     : 0;
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between gap-6">
-          <Link href="/" className="flex items-center gap-3 shrink-0 group">
-            <ShopLogo size="md" />
-            <span className="font-bold text-white text-lg tracking-tight group-hover:text-blue-400 transition-colors">
-              PREMIA
-            </span>
-          </Link>
+    <>
+      {/* ── Sub-header for Back Navigation ── */}
+      <div className="bg-white/[0.02] border-b border-white/5 sticky top-16 z-20">
+        <div className="max-w-6xl mx-auto px-6 sm:px-10 h-12 flex items-center justify-between gap-6">
           <Link
-            href="/"
-            className="text-xs font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors"
+            href="/storefront/collection"
+            className="text-[11px] font-bold uppercase tracking-widest text-gray-500 hover:text-white transition-colors flex items-center gap-2"
           >
-            ← Back to Store
+            ← Back to Collection
           </Link>
         </div>
-      </header>
+      </div>
 
       {/* ── Main Product Display ── */}
       <main className="flex-1 relative z-10 flex items-center justify-center">
@@ -201,22 +183,6 @@ export default function CustomerArticlePage({
           </div>
         </div>
       </main>
-
-      {/* ── Footer ── */}
-      <footer className="border-t border-white/5 relative z-10 bg-black/40 backdrop-blur-xl">
-        <div className="max-w-6xl mx-auto px-6 sm:px-10 py-8 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="sm" />
-            <div>
-              <p className="text-sm font-bold text-white tracking-tight">PREMIA</p>
-              <p className="text-xs text-gray-500 mt-0.5">Premium articles, transparent pricing.</p>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500">
-            &copy; {new Date().getFullYear()} Premia &nbsp;·&nbsp; All prices include VAT
-          </p>
-        </div>
-      </footer>
-    </div>
+    </>
   );
 }

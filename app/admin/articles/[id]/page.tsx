@@ -14,10 +14,11 @@ import {
   resizeImage,
   getAllCategories,
 } from "@/lib/storage";
-import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, classifyDiscount } from "@/lib/pricing";
+import { getEffectivePrice, getActiveDiscount, applyVat, formatCurrency, toDateString, classifyDiscount, formatDateShort } from "@/lib/pricing";
+import { useCategoryData } from "@/hooks/useCategoryData";
 import type { Article, Category } from "@/lib/types";
-import { DiscountStatusBadge } from "@/app/components/Badge";
-import { ShopLogo } from "@/app/components/ShopLogo";
+import { DiscountStatusBadge } from "@/components/Badge";
+import { ShopLogo } from "@/components/ShopLogo";
 
 export default function ManageArticlePage() {
   const params = useParams();
@@ -44,8 +45,8 @@ export default function ManageArticlePage() {
   const [editError, setEditError] = useState("");
 
   const [discountForm, setDiscountForm] = useState({
-    startDate: "",
-    endDate: "",
+    startDate: toDateString(new Date()),
+    endDate: toDateString(new Date()),
     discountedPrice: "",
   });
   const [formError, setFormError] = useState("");
@@ -66,26 +67,7 @@ export default function ManageArticlePage() {
     }
   }, [reload, user]);
 
-  const buildTree = (cats: Category[], parentId: string | null = null): (Category & { children: any[], level: number })[] => {
-    return cats
-      .filter(c => c.parentId === parentId)
-      .map(c => ({
-        ...c,
-        level: 0,
-        children: buildTree(cats, c.id)
-      }));
-  };
-
-  const flattenTree = (tree: any[], level = 0): any[] => {
-    let result: any[] = [];
-    for (const node of tree) {
-      result.push({ ...node, level });
-      result = result.concat(flattenTree(node.children, level + 1));
-    }
-    return result;
-  };
-
-  const flattenedCategories = flattenTree(buildTree(categories));
+  const { flattenedCategories } = useCategoryData({ categories });
 
   if (loading || !user) return null;
   if (!article) return <div className="p-8 text-white">Loading or Not Found...</div>;
@@ -142,7 +124,8 @@ export default function ManageArticlePage() {
   const activeDiscount = getActiveDiscount(article, date);
   const price = getEffectivePrice(article, date);
   const grossPrice = applyVat(price, article.vatRatio);
-  const isCapped = activeDiscount !== undefined && activeDiscount.discountedPrice < article.netPrice;
+  const isCapped = activeDiscount !== undefined && (activeDiscount.discountedPrice ?? article.salesPrice) < article.netPrice;
+
 
   const sortedDiscounts = [...article.discounts].sort((a, b) => a.startDate.localeCompare(b.startDate));
 
@@ -170,6 +153,11 @@ export default function ManageArticlePage() {
     const dp = parseFloat(discountedPrice);
     if (isNaN(dp) || dp < 0) return setFormError("Invalid discounted price.");
 
+    // Prevent discount price from being lower than the net price
+    if (dp < article!.netPrice) {
+      return setFormError(`Discounted price cannot be lower than the net price (${formatCurrency(article!.netPrice)}).`);
+    }
+
     // Check overlap
     const overlap = article!.discounts.some((d) => startDate <= d.endDate && endDate >= d.startDate);
     if (overlap) return setFormError("This period overlaps with an existing discount.");
@@ -182,48 +170,17 @@ export default function ManageArticlePage() {
         discountedPrice: dp,
       });
 
-      setDiscountForm({ startDate: "", endDate: "", discountedPrice: "" });
+      setDiscountForm({ startDate: toDateString(new Date()), endDate: toDateString(new Date()), discountedPrice: "" });
       reload();
     } catch (err: any) {
       setFormError(err.message || "Failed to add discount.");
     }
   }
 
-  const fmtDate = (dStr: string) =>
-    new Date(dStr + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const fmtDate = (dStr: string) => formatDateShort(dStr);
 
   return (
-    <div className="min-h-screen bg-black text-gray-100 flex flex-col relative selection:bg-blue-500/30 selection:text-blue-200 font-sans">
-      {/* Global Ambient Background */}
-      <div 
-        className="fixed inset-0 pointer-events-none z-0" 
-        style={{
-          background: `
-            radial-gradient(circle at 15% 50%, rgba(59, 130, 246, 0.08), transparent 50%),
-            radial-gradient(circle at 85% 30%, rgba(168, 85, 247, 0.08), transparent 50%),
-            radial-gradient(circle at 50% 100%, rgba(6, 182, 212, 0.08), transparent 50%)
-          `
-        }}
-      />
-
-      {/* ── Header ── */}
-      <header className="bg-black/60 backdrop-blur-xl border-b border-white/5 sticky top-0 z-30 transition-all duration-300">
-        <div className="max-w-3xl mx-auto px-6 sm:px-10 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <ShopLogo size="md" />
-            <Link
-              href="/admin/dashboard"
-              className="font-bold text-white text-lg tracking-tight uppercase hover:text-gray-300 transition-colors"
-            >
-              PREMIA
-            </Link>
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400 border border-white/10 px-2 py-0.5 rounded-sm">
-              Admin
-            </span>
-          </div>
-        </div>
-      </header>
-
+    <>
       {/* ── Sub-header ── */}
       <div className="border-b border-white/5 bg-white/[0.02] relative z-10">
         <div className="max-w-3xl mx-auto px-6 sm:px-10 h-14 flex items-center gap-2.5 text-xs font-medium uppercase tracking-widest">
@@ -524,8 +481,9 @@ export default function ManageArticlePage() {
                 <tbody className="divide-y divide-white/5">
                   {sortedDiscounts.map((d) => {
                     const status = classifyDiscount(d, date);
-                    const capped = d.discountedPrice < article.netPrice;
-                    const effectiveP = Math.max(d.discountedPrice, article.netPrice);
+                    const dp = d.discountedPrice ?? 0;
+                    const capped = dp < article.netPrice;
+                    const effectiveP = Math.max(dp, article.netPrice);
                     const saving = !capped ? article.salesPrice - effectiveP : null;
                     return (
                       <tr key={d.id} className={`transition-colors ${status === "active" ? "bg-blue-500/5" : "hover:bg-white/[0.03]"}`}>
@@ -535,7 +493,7 @@ export default function ManageArticlePage() {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <span className={`font-bold tabular-nums tracking-tight ${status === "active" ? "text-blue-400" : "text-gray-300"}`}>
-                            {formatCurrency(d.discountedPrice)}
+                            {formatCurrency(dp)}
                           </span>
                           {capped && <span className="ml-2 text-[10px] font-bold uppercase text-red-400">floor</span>}
                         </td>
@@ -605,7 +563,7 @@ export default function ManageArticlePage() {
           </div>
         </section>
       </main>
-    </div>
+    </>
   );
 }
 
